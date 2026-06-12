@@ -35,6 +35,8 @@ pub struct AnmRunner {
     pub scale: [f32; 2],
     /// Anchor at top-left (opcode 23) instead of the sprite center.
     pub corner: bool,
+    /// Horizontal mirror (opcode 7).
+    pub flip_x: bool,
 }
 
 impl AnmRunner {
@@ -51,6 +53,7 @@ impl AnmRunner {
             alpha: 1.0,
             scale: [1.0, 1.0],
             corner: false,
+            flip_x: false,
         };
         runner.exec_ready();
         runner
@@ -105,7 +108,12 @@ impl AnmRunner {
     }
 
     fn exec_ready(&mut self) {
+        let mut budget = 1000; // guards against zero-frame jump loops
         while !self.halted && !self.dead && self.pc < self.instrs.len() {
+            budget -= 1;
+            if budget == 0 {
+                break;
+            }
             let i = &self.instrs[self.pc];
             if i.time > self.clock {
                 break;
@@ -122,6 +130,17 @@ impl AnmRunner {
                 1 => self.sprite = Some(i.arg_u32(0)),
                 2 => self.scale = [i.arg_f32(0), i.arg_f32(1)],
                 3 => self.alpha = i.arg_u32(0) as f32 / 255.0,
+                5 => {
+                    // Jump: arg is a byte offset from script start; the
+                    // clock snaps to the target instruction's time.
+                    let target = i.arg_u32(0);
+                    if let Some(idx) = self.instrs.iter().position(|x| x.offset == target) {
+                        self.pc = idx;
+                        self.clock = self.instrs[idx].time;
+                        continue;
+                    }
+                }
+                7 => self.flip_x = !self.flip_x,
                 17 => {
                     self.pos = [i.arg_f32(0), i.arg_f32(1)];
                     self.moving = None;

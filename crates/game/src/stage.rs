@@ -1,10 +1,16 @@
-//! Stage 1 gameplay: Reimu, fairy waves, Rumia, lives/bombs, HUD.
+//! Stage gameplay driven by the original ECL scripts.
 //!
-//! Patterns are a hand-scripted approximation of the original stage; the
-//! real ECL interpreter replaces this in a later milestone. Coordinates
-//! are playfield-relative (384x448), drawn at screen offset (32, 16).
+//! The timeline spawns enemies exactly as the 2002 engine does; enemy
+//! behavior runs in ecl_vm. The player, bomb and HUD live here.
+
+use std::collections::HashMap;
 
 use th06_engine::{DrawCmd, Input, Key};
+use th06_formats::anm0::{Entry, Instr as AnmInstr, Sprite};
+use th06_formats::ecl::Ecl;
+
+use crate::anm_vm::AnmRunner;
+use crate::ecl_vm::{Bullet, Enemy, Rng, SpawnReq, World, WorldEvent};
 
 pub const FIELD_W: f32 = 384.0;
 pub const FIELD_H: f32 = 448.0;
@@ -28,7 +34,6 @@ pub enum Event {
 #[derive(Clone, Copy)]
 struct SpriteRef {
     tex: usize,
-    // Pixel rect in the 256x256 sheet.
     rect: [f32; 4],
 }
 
@@ -36,7 +41,6 @@ const fn spr(tex: usize, x: f32, y: f32, w: f32, h: f32) -> SpriteRef {
     SpriteRef { tex, rect: [x, y, w, h] }
 }
 
-// Reimu (player00.anm): idle frames, amulet, needle, bomb glow.
 const REIMU_IDLE: [SpriteRef; 4] = [
     spr(TEX_PLAYER, 1.0, 1.0, 31.0, 47.0),
     spr(TEX_PLAYER, 33.0, 1.0, 31.0, 47.0),
@@ -47,36 +51,6 @@ const AMULET: SpriteRef = spr(TEX_PLAYER, 129.0, 1.0, 14.0, 14.0);
 const NEEDLE: SpriteRef = spr(TEX_PLAYER, 193.0, 1.0, 14.0, 46.0);
 const BOMB_GLOW: SpriteRef = spr(TEX_PLAYER, 1.0, 97.0, 62.0, 62.0);
 
-// Fairies (stg1enm.anm): 30x30 frames, row per color.
-const FAIRY_BLUE: [SpriteRef; 4] = [
-    spr(TEX_FAIRY, 1.0, 1.0, 30.0, 30.0),
-    spr(TEX_FAIRY, 33.0, 1.0, 30.0, 30.0),
-    spr(TEX_FAIRY, 65.0, 1.0, 30.0, 30.0),
-    spr(TEX_FAIRY, 97.0, 1.0, 30.0, 30.0),
-];
-const FAIRY_PINK: [SpriteRef; 4] = [
-    spr(TEX_FAIRY, 1.0, 33.0, 30.0, 30.0),
-    spr(TEX_FAIRY, 33.0, 33.0, 30.0, 30.0),
-    spr(TEX_FAIRY, 65.0, 33.0, 30.0, 30.0),
-    spr(TEX_FAIRY, 97.0, 33.0, 30.0, 30.0),
-];
-
-// Rumia (stg1enm2.anm); sprite x coordinates wrap at the 256px sheet edge.
-const RUMIA_IDLE: [SpriteRef; 4] = [
-    spr(TEX_RUMIA, 0.0, 0.0, 32.0, 48.0),
-    spr(TEX_RUMIA, 32.0, 0.0, 32.0, 48.0),
-    spr(TEX_RUMIA, 64.0, 0.0, 32.0, 48.0),
-    spr(TEX_RUMIA, 96.0, 0.0, 32.0, 48.0),
-];
-const RUMIA_CAST: SpriteRef = spr(TEX_RUMIA, 0.0, 48.0, 32.0, 48.0);
-
-// Bullets (etama3.anm). Color picked via 16px row offsets.
-const PELLET_RED: SpriteRef = spr(TEX_BULLET, 136.0, 208.0, 8.0, 8.0);
-const BALL_RED: SpriteRef = spr(TEX_BULLET, 16.0, 32.0, 16.0, 16.0);
-const BALL_BLUE: SpriteRef = spr(TEX_BULLET, 96.0, 32.0, 16.0, 16.0);
-const RICE_RED: SpriteRef = spr(TEX_BULLET, 17.0, 64.0, 14.0, 16.0);
-
-// HUD (front.anm).
 const HUD_LOGO: SpriteRef = spr(TEX_FRONT, 128.0, 128.0, 128.0, 128.0);
 const HUD_PLAYER_LABEL: SpriteRef = spr(TEX_FRONT, 0.0, 208.0, 32.0, 16.0);
 const HUD_BOMB_LABEL: SpriteRef = spr(TEX_FRONT, 0.0, 240.0, 32.0, 16.0);
@@ -89,43 +63,6 @@ struct Shot {
     needle: bool,
 }
 
-struct Bullet {
-    pos: [f32; 2],
-    vel: [f32; 2],
-    sprite: SpriteRef,
-    radius: f32,
-}
-
-#[derive(PartialEq)]
-enum FairyKind {
-    Blue,
-    Pink,
-}
-
-struct Enemy {
-    pos: [f32; 2],
-    vel: [f32; 2],
-    hp: i32,
-    kind: FairyKind,
-    age: u32,
-    fire_at: u32,
-}
-
-enum BossPhase {
-    Entering,
-    Normal,
-    Spell,
-    Dying(u32),
-}
-
-struct Boss {
-    pos: [f32; 2],
-    hp: i32,
-    phase: BossPhase,
-    age: u32,
-    spiral: f32,
-}
-
 enum PlayerState {
     Alive,
     Dead(u32),
@@ -133,23 +70,48 @@ enum PlayerState {
     Cleared(u32),
 }
 
-/// Tiny LCG; determinism is fine, fidelity comes later with the decomp RNG.
-struct Rng(u32);
-impl Rng {
-    fn next(&mut self) -> u32 {
-        self.0 = self.0.wrapping_mul(1664525).wrapping_add(1013904223);
-        self.0
+/// One enemy ANM script with its sprite table and texture slot.
+pub struct ScriptRef {
+    pub tex: usize,
+    pub instrs: Vec<AnmInstr>,
+    pub sprites: HashMap<u32, Sprite>,
+    pub tex_size: [f32; 2],
+}
+
+/// Build the enemy script table keyed by ANM script id (stg1enm uses ids
+/// 0..7, stg1enm2 the boss bank at 128+), matching ECL ANMSETMAIN indices.
+pub fn build_enemy_scripts(entries: &[(&Entry, usize)]) -> HashMap<i32, ScriptRef> {
+    let mut out = HashMap::new();
+    for (entry, tex) in entries {
+        for (id, instrs) in &entry.scripts {
+            out.insert(
+                *id as i32,
+                ScriptRef {
+                    tex: *tex,
+                    instrs: instrs.clone(),
+                    sprites: entry.sprites.iter().map(|s| (s.index, s.clone())).collect(),
+                    tex_size: [entry.width as f32, entry.height as f32],
+                },
+            );
+        }
     }
-    fn f32(&mut self) -> f32 {
-        (self.next() >> 8) as f32 / 16777216.0
-    }
+    out
 }
 
 pub struct Stage {
     tick: u32,
-    rng: Rng,
-    pos: [f32; 2],
     anim: u32,
+    ecl: Ecl,
+    world: World,
+    enemies: Vec<Enemy>,
+    anims: Vec<Option<AnmRunner>>,
+    timeline_off: u32,
+    timeline_time: i32,
+    enemy_scripts: HashMap<i32, ScriptRef>,
+    bullet_sprites: HashMap<u32, Sprite>,
+    bullet_tex_size: [f32; 2],
+    // player
+    pos: [f32; 2],
     lives: i32,
     bombs: i32,
     invuln: u32,
@@ -157,25 +119,37 @@ pub struct Stage {
     fire_cd: u32,
     state: PlayerState,
     shots: Vec<Shot>,
-    bullets: Vec<Bullet>,
-    enemies: Vec<Enemy>,
-    boss: Option<Boss>,
-    boss_started: bool,
+    spell_active: bool,
+    boss_bgm_started: bool,
     pub events: Vec<Event>,
 }
 
 impl Stage {
-    /// Debug aid for headless runs.
-    pub fn set_lives(&mut self, lives: i32) {
-        self.lives = lives;
-    }
-
-    pub fn new() -> Self {
+    pub fn new(ecl: Ecl, enemy_scripts: HashMap<i32, ScriptRef>, etama: &Entry) -> Self {
+        let timeline_off = ecl.timeline_offset;
         Self {
             tick: 0,
-            rng: Rng(0x6a09e667),
-            pos: [FIELD_W / 2.0, FIELD_H - 40.0],
             anim: 0,
+            ecl,
+            world: World {
+                rng: Rng::new(0x1234),
+                difficulty: 1, // Normal
+                rank: 16,
+                player_pos: [FIELD_W / 2.0, FIELD_H - 40.0],
+                bullets: Vec::new(),
+                events: Vec::new(),
+                pending_spawns: Vec::new(),
+                kill_trash: false,
+                boss_present: false,
+            },
+            enemies: Vec::new(),
+            anims: Vec::new(),
+            timeline_off,
+            timeline_time: 0,
+            enemy_scripts,
+            bullet_sprites: etama.sprites.iter().map(|s| (s.index, s.clone())).collect(),
+            bullet_tex_size: [etama.width as f32, etama.height as f32],
+            pos: [FIELD_W / 2.0, FIELD_H - 40.0],
             lives: 2,
             bombs: 3,
             invuln: 0,
@@ -183,29 +157,32 @@ impl Stage {
             fire_cd: 0,
             state: PlayerState::Alive,
             shots: Vec::new(),
-            bullets: Vec::new(),
-            enemies: Vec::new(),
-            boss: None,
-            boss_started: false,
+            spell_active: false,
+            boss_bgm_started: false,
             events: vec![Event::Bgm("th06_02.wav")],
         }
+    }
+
+    pub fn set_lives(&mut self, lives: i32) {
+        self.lives = lives;
     }
 
     pub fn update(&mut self, input: &Input) -> Vec<DrawCmd> {
         self.tick += 1;
         self.anim += 1;
 
-        let mut next_state: Option<PlayerState> = None;
+        // Player state machine.
+        let mut respawn = false;
         match &mut self.state {
             PlayerState::Alive => {}
             PlayerState::Dead(t) => {
                 *t -= 1;
                 if *t == 0 {
-                    next_state = Some(if self.lives < 0 {
-                        PlayerState::GameOver(180)
+                    if self.lives < 0 {
+                        self.state = PlayerState::GameOver(180);
                     } else {
-                        PlayerState::Alive
-                    });
+                        respawn = true;
+                    }
                 }
             }
             PlayerState::GameOver(t) | PlayerState::Cleared(t) => {
@@ -216,29 +193,212 @@ impl Stage {
                 }
             }
         }
-        if let Some(s) = next_state {
-            if matches!(s, PlayerState::Alive) {
-                self.pos = [FIELD_W / 2.0, FIELD_H - 40.0];
-                self.invuln = 180;
-            }
-            self.state = s;
+        if respawn {
+            self.pos = [FIELD_W / 2.0, FIELD_H - 40.0];
+            self.invuln = 180;
+            self.state = PlayerState::Alive;
         }
-        if self.alive() {
+        if matches!(self.state, PlayerState::Alive) {
             self.update_player(input);
         }
-
         self.invuln = self.invuln.saturating_sub(1);
-        self.run_script();
+        self.world.player_pos = self.pos;
+
+        self.run_timeline();
         self.update_enemies();
-        self.update_boss();
         self.update_shots();
         self.update_bullets();
         self.collide();
+        self.drain_world_events();
+
+        // Stage clear: timeline exhausted and field empty.
+        if matches!(self.state, PlayerState::Alive)
+            && self.timeline_done()
+            && self.enemies.is_empty()
+            && !self.world.boss_present
+        {
+            self.state = PlayerState::Cleared(300);
+        }
+
         self.draw()
     }
 
-    fn alive(&self) -> bool {
-        matches!(self.state, PlayerState::Alive)
+    fn timeline_done(&self) -> bool {
+        self.ecl
+            .timeline_at(self.timeline_off)
+            .map(|t| t.time < 0)
+            .unwrap_or(true)
+    }
+
+    /// Port of EnemyManager::RunEclTimeline (dialogue ops are skipped — no
+    /// MSG interpreter yet).
+    fn run_timeline(&mut self) {
+        loop {
+            // Copy the instruction out so the borrow of the ECL data ends
+            // before any spawning mutates `self`.
+            struct T {
+                time: i32,
+                arg0: i32,
+                opcode: i16,
+                size: u32,
+                pos: [f32; 3],
+                life: i16,
+                item: i16,
+                score: i32,
+                a0: i32,
+                a1: i32,
+            }
+            let t = {
+                let Some(raw) = self.ecl.timeline_at(self.timeline_off) else { return };
+                let has_full = raw.args.len() >= 20;
+                T {
+                    time: raw.time as i32,
+                    arg0: raw.arg0 as i32,
+                    opcode: raw.opcode,
+                    size: raw.size as u32,
+                    pos: if raw.args.len() >= 12 {
+                        [raw.arg_f32(0), raw.arg_f32(4), raw.arg_f32(8)]
+                    } else {
+                        [0.0; 3]
+                    },
+                    life: if has_full { raw.arg_u16(12) as i16 } else { -1 },
+                    item: if has_full { raw.arg_u16(14) as i16 } else { -2 },
+                    score: if has_full { raw.arg_i32(16) } else { -1 },
+                    a0: if raw.args.len() >= 4 { raw.arg_i32(0) } else { 0 },
+                    a1: if raw.args.len() >= 8 { raw.arg_i32(4) } else { 0 },
+                }
+            };
+            if t.time < 0 {
+                return;
+            }
+            if self.timeline_time < t.time {
+                break;
+            }
+            if self.timeline_time == t.time {
+                match t.opcode {
+                    0..=7 => {
+                        if !self.world.boss_present {
+                            let mut pos = t.pos;
+                            if t.opcode >= 4 {
+                                if pos[0] <= -990.0 {
+                                    pos[0] = self.world.rng.f32_in_range(368.0);
+                                }
+                                if pos[1] <= -990.0 {
+                                    pos[1] = self.world.rng.f32_in_range(416.0);
+                                }
+                                if pos[2] <= -990.0 {
+                                    pos[2] = self.world.rng.f32_in_range(800.0);
+                                }
+                            }
+                            let with_args = t.opcode % 2 == 0;
+                            let (life, item, score) = if with_args {
+                                (t.life, t.item, t.score)
+                            } else {
+                                (-1, -2, -1)
+                            };
+                            let mirror = matches!(t.opcode, 2 | 3 | 6 | 7);
+                            self.spawn(SpawnReq { sub: t.arg0, pos, life, item, score, mirror });
+                        }
+                    }
+                    8 | 9 => {} // dialogue — skipped until the MSG interpreter exists
+                    10 => {
+                        let interrupt = t.a1;
+                        let _ = t.a0;
+                        for e in &mut self.enemies {
+                            if e.is_boss {
+                                e.fire_interrupt(interrupt);
+                            }
+                        }
+                    }
+                    11 => {} // set power
+                    12 => {
+                        // Wait for the boss slot to clear.
+                        if self.enemies.iter().any(|e| e.is_boss && e.occupied) {
+                            return; // do not advance time
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            self.timeline_off += t.size;
+        }
+        self.timeline_time += 1;
+    }
+
+    fn spawn(&mut self, req: SpawnReq) {
+        if std::env::var_os("TH06_TRACE").is_some() {
+            eprintln!(
+                "[{}] spawn sub={} pos=({:.0},{:.0}) life={}",
+                self.timeline_time, req.sub, req.pos[0], req.pos[1], req.life
+            );
+        }
+        if let Some(e) = Enemy::spawn(&self.ecl, &mut self.world, &req) {
+            self.enemies.push(e);
+            self.anims.push(None);
+        }
+        self.flush_spawns();
+    }
+
+    fn flush_spawns(&mut self) {
+        while let Some(req) = self.world.pending_spawns.pop() {
+            if let Some(e) = Enemy::spawn(&self.ecl, &mut self.world, &req) {
+                self.enemies.push(e);
+                self.anims.push(None);
+            }
+        }
+    }
+
+    fn update_enemies(&mut self) {
+        for i in 0..self.enemies.len() {
+            let e = &mut self.enemies[i];
+            if !e.occupied {
+                continue;
+            }
+            e.frame_move();
+            if !e.update_bounds() {
+                e.occupied = false;
+                continue;
+            }
+            e.handle_callbacks(&self.ecl, &mut self.world);
+            e.run_ecl(&self.ecl, &mut self.world);
+
+            // Refresh the ANM runner when the script changed.
+            if e.anm_dirty {
+                e.anm_dirty = false;
+                self.anims[i] = self
+                    .enemy_scripts
+                    .get(&e.anm_script)
+                    .map(|s| AnmRunner::new(s.instrs.clone()));
+            }
+            if let Some(anim) = &mut self.anims[i] {
+                anim.tick();
+            }
+        }
+        self.flush_spawns();
+
+        if self.world.kill_trash {
+            self.world.kill_trash = false;
+            for i in 0..self.enemies.len() {
+                let e = &mut self.enemies[i];
+                if e.occupied && !e.is_boss {
+                    e.life = 0;
+                    e.on_death(&self.ecl, &mut self.world);
+                }
+            }
+        }
+
+        // Compact dead slots.
+        let mut kept_anims = Vec::with_capacity(self.anims.len());
+        let mut idx = 0;
+        self.enemies.retain(|e| {
+            let keep = e.occupied;
+            if keep {
+                kept_anims.push(self.anims[idx].take());
+            }
+            idx += 1;
+            keep
+        });
+        self.anims = kept_anims;
     }
 
     fn update_player(&mut self, input: &Input) {
@@ -265,7 +425,6 @@ impl Stage {
         self.pos[0] = (self.pos[0] + d[0] * speed).clamp(12.0, FIELD_W - 12.0);
         self.pos[1] = (self.pos[1] + d[1] * speed).clamp(20.0, FIELD_H - 20.0);
 
-        // Shooting.
         self.fire_cd = self.fire_cd.saturating_sub(1);
         if input.held(Key::Shoot) && self.fire_cd == 0 {
             self.fire_cd = 4;
@@ -291,17 +450,12 @@ impl Stage {
             }
         }
 
-        // Bomb: Fantasy Seal.
         if self.bombing > 0 {
             self.bombing -= 1;
-            self.bullets.clear();
-            let dmg = 4;
+            self.world.bullets.clear();
             for e in &mut self.enemies {
-                e.hp -= dmg;
-            }
-            if let Some(b) = &mut self.boss {
-                if !matches!(b.phase, BossPhase::Entering | BossPhase::Dying(_)) {
-                    b.hp -= dmg;
+                if e.occupied && e.interactable && e.damageable {
+                    e.life -= 4;
                 }
             }
         } else if input.pressed(Key::Bomb) && self.bombs > 0 {
@@ -309,188 +463,6 @@ impl Stage {
             self.bombing = 120;
             self.invuln = self.invuln.max(180);
             self.events.push(Event::Sfx("power1"));
-        }
-    }
-
-    /// Timed wave script for the pre-boss section, then the boss.
-    fn run_script(&mut self) {
-        let t = self.tick;
-        // Waves of blue fairies swooping in from the top corners.
-        if (120..=480).contains(&t) && t % 40 == 0 {
-            let from_left = (t / 40) % 2 == 0;
-            let x = if from_left { 40.0 } else { FIELD_W - 40.0 };
-            let vx = if from_left { 1.4 } else { -1.4 };
-            self.spawn_fairy([x, -16.0], [vx, 2.2], FairyKind::Blue, 70);
-        }
-        // A line of pink fairies sweeping across.
-        if (700..=940).contains(&t) && t % 40 == 0 {
-            self.spawn_fairy([-16.0, 60.0], [3.0, 0.6], FairyKind::Pink, 50);
-        }
-        // Symmetric streams.
-        if (1100..=1500).contains(&t) && t % 30 == 0 {
-            let phase = ((t / 30) % 5) as f32;
-            self.spawn_fairy([40.0 + phase * 70.0, -16.0], [0.0, 2.6], FairyKind::Blue, 60);
-        }
-        // Pre-boss rush.
-        if (1700..=1940).contains(&t) && t % 24 == 0 {
-            let x = 30.0 + self.rng.f32() * (FIELD_W - 60.0);
-            self.spawn_fairy([x, -16.0], [0.0, 3.2], FairyKind::Pink, 45);
-        }
-        // Rumia.
-        if t == 2300 && !self.boss_started {
-            self.boss_started = true;
-            self.boss = Some(Boss {
-                pos: [FIELD_W / 2.0, -40.0],
-                hp: 1800,
-                phase: BossPhase::Entering,
-                age: 0,
-                spiral: 0.0,
-            });
-            self.events.push(Event::Bgm("th06_03.wav"));
-        }
-    }
-
-    fn spawn_fairy(&mut self, pos: [f32; 2], vel: [f32; 2], kind: FairyKind, fire_at: u32) {
-        self.enemies.push(Enemy { pos, vel, hp: 32, kind, age: 0, fire_at });
-    }
-
-    fn update_enemies(&mut self) {
-        let mut fired: Vec<Bullet> = Vec::new();
-        let mut killed = 0;
-        let player = self.pos;
-        let player_alive = self.alive();
-        for e in &mut self.enemies {
-            e.age += 1;
-            e.pos[0] += e.vel[0];
-            e.pos[1] += e.vel[1];
-            // Blue fairies curve away after a while.
-            if e.kind == FairyKind::Blue && e.age > 90 {
-                e.vel[1] -= 0.05;
-            }
-            if e.age == e.fire_at && player_alive {
-                let dx = player[0] - e.pos[0];
-                let dy = player[1] - e.pos[1];
-                let len = (dx * dx + dy * dy).sqrt().max(0.001);
-                let v = [dx / len * 2.4, dy / len * 2.4];
-                let sprite = if e.kind == FairyKind::Blue { PELLET_RED } else { RICE_RED };
-                fired.push(Bullet { pos: e.pos, vel: v, sprite, radius: 3.0 });
-            }
-        }
-        if !fired.is_empty() {
-            self.events.push(Event::Sfx("tan00"));
-        }
-        self.bullets.append(&mut fired);
-        self.enemies.retain(|e| {
-            if e.hp <= 0 {
-                killed += 1;
-                return false;
-            }
-            e.pos[1] < FIELD_H + 24.0 && e.pos[1] > -60.0 && e.pos[0] > -24.0 && e.pos[0] < FIELD_W + 24.0
-        });
-        for _ in 0..killed {
-            self.events.push(Event::Sfx("enep00"));
-        }
-    }
-
-    fn update_boss(&mut self) {
-        let Some(boss) = &mut self.boss else { return };
-        boss.age += 1;
-        let mut volley: Vec<Bullet> = Vec::new();
-        let mut defeated = false;
-        let player = self.pos;
-        let aim = |from: [f32; 2], speed: f32| -> [f32; 2] {
-            let dx = player[0] - from[0];
-            let dy = player[1] - from[1];
-            let len = (dx * dx + dy * dy).sqrt().max(0.001);
-            [dx / len * speed, dy / len * speed]
-        };
-
-        match boss.phase {
-            BossPhase::Entering => {
-                boss.pos[1] += 1.5;
-                if boss.pos[1] >= 96.0 {
-                    boss.phase = BossPhase::Normal;
-                    boss.age = 0;
-                }
-            }
-            BossPhase::Normal => {
-                boss.pos[0] = FIELD_W / 2.0 + (boss.age as f32 * 0.015).sin() * 90.0;
-                // Ring of red balls.
-                if boss.age % 90 == 20 {
-                    for i in 0..24 {
-                        let a = i as f32 / 24.0 * std::f32::consts::TAU;
-                        volley.push(Bullet {
-                            pos: boss.pos,
-                            vel: [a.cos() * 1.6, a.sin() * 1.6],
-                            sprite: BALL_RED,
-                            radius: 4.5,
-                        });
-                    }
-                    self.events.push(Event::Sfx("tan02"));
-                }
-                // Aimed rice fan.
-                if boss.age % 50 == 0 {
-                    let base = aim(boss.pos, 2.6);
-                    for spread in [-0.35f32, 0.0, 0.35] {
-                        let (s, c) = spread.sin_cos();
-                        volley.push(Bullet {
-                            pos: boss.pos,
-                            vel: [base[0] * c - base[1] * s, base[0] * s + base[1] * c],
-                            sprite: RICE_RED,
-                            radius: 3.0,
-                        });
-                    }
-                    self.events.push(Event::Sfx("tan01"));
-                }
-                if boss.hp <= 900 {
-                    boss.phase = BossPhase::Spell;
-                    boss.age = 0;
-                    self.bullets.clear();
-                    self.events.push(Event::Sfx("cat00"));
-                }
-            }
-            BossPhase::Spell => {
-                // "Darkness sign"-style rotating spiral.
-                boss.pos[0] = FIELD_W / 2.0 + (boss.age as f32 * 0.01).sin() * 60.0;
-                boss.pos[1] = 96.0 + (boss.age as f32 * 0.02).cos() * 24.0;
-                if boss.age % 5 == 0 {
-                    boss.spiral += 0.55;
-                    for arm in 0..4 {
-                        let a = boss.spiral + arm as f32 * std::f32::consts::FRAC_PI_2;
-                        volley.push(Bullet {
-                            pos: boss.pos,
-                            vel: [a.cos() * 1.9, a.sin() * 1.9],
-                            sprite: BALL_BLUE,
-                            radius: 4.5,
-                        });
-                    }
-                }
-                if boss.age % 110 == 60 {
-                    volley.push(Bullet {
-                        pos: boss.pos,
-                        vel: aim(boss.pos, 2.2),
-                        sprite: BALL_RED,
-                        radius: 4.5,
-                    });
-                    self.events.push(Event::Sfx("tan00"));
-                }
-                if boss.hp <= 0 {
-                    boss.phase = BossPhase::Dying(60);
-                    self.bullets.clear();
-                    self.events.push(Event::Sfx("enep01"));
-                }
-            }
-            BossPhase::Dying(ref mut t) => {
-                *t -= 1;
-                if *t == 0 {
-                    defeated = true;
-                }
-            }
-        }
-        self.bullets.append(&mut volley);
-        if defeated {
-            self.boss = None;
-            self.state = PlayerState::Cleared(300);
         }
     }
 
@@ -503,124 +475,206 @@ impl Stage {
     }
 
     fn update_bullets(&mut self) {
-        for b in &mut self.bullets {
-            b.pos[0] += b.vel[0];
-            b.pos[1] += b.vel[1];
+        for b in &mut self.world.bullets {
+            let factor = if b.spawn_delay > 0 {
+                b.spawn_delay -= 1;
+                1.0 / 2.5
+            } else {
+                1.0
+            };
+            b.pos[0] += b.angle.cos() * b.speed * factor;
+            b.pos[1] += b.angle.sin() * b.speed * factor;
         }
-        self.bullets.retain(|b| {
+        self.world.bullets.retain(|b| {
             b.pos[0] > -20.0 && b.pos[0] < FIELD_W + 20.0 && b.pos[1] > -20.0 && b.pos[1] < FIELD_H + 20.0
         });
     }
 
+    fn bullet_radius(&self, b: &Bullet) -> f32 {
+        match self.bullet_sprites.get(&b.sprite).map(|s| s.height as u32) {
+            Some(h) if h <= 8 => 2.0,
+            Some(h) if h <= 16 => 3.2,
+            Some(_) => 8.0,
+            None => 3.0,
+        }
+    }
+
     fn collide(&mut self) {
-        // Player shots vs enemies and boss.
-        let mut hit_sfx = false;
+        // Player shots vs enemies.
+        let spell_penalty = self.spell_active && self.bombing == 0;
         for s in &mut self.shots {
-            let dmg = if s.needle { 6 } else { 4 };
+            let mut dmg = if s.needle { 6 } else { 4 };
+            if spell_penalty {
+                dmg = (dmg / 7).max(1);
+            }
             for e in &mut self.enemies {
+                if !e.occupied || !e.interactable {
+                    continue;
+                }
+                let r = (e.hitbox[0].max(e.hitbox[1])) / 2.0 + 6.0;
                 let dx = s.pos[0] - e.pos[0];
                 let dy = s.pos[1] - e.pos[1];
-                if dx * dx + dy * dy < 18.0 * 18.0 && e.hp > 0 {
-                    e.hp -= dmg;
-                    s.pos[1] = -100.0; // consume
-                    hit_sfx = true;
+                if dx * dx + dy * dy < r * r {
+                    if e.damageable {
+                        e.life -= dmg;
+                    }
+                    s.pos[1] = -100.0;
                     break;
                 }
             }
-            if let Some(b) = &mut self.boss {
-                if !matches!(b.phase, BossPhase::Entering | BossPhase::Dying(_)) {
-                    let dx = s.pos[0] - b.pos[0];
-                    let dy = s.pos[1] - b.pos[1];
-                    if dx * dx + dy * dy < 28.0 * 28.0 {
-                        b.hp -= dmg;
-                        s.pos[1] = -100.0;
-                        hit_sfx = true;
-                    }
-                }
-            }
-        }
-        if hit_sfx && self.tick % 4 == 0 {
-            self.events.push(Event::Sfx("damage00"));
         }
         self.shots.retain(|s| s.pos[1] > -90.0);
 
-        // Bullets and enemy bodies vs player.
-        if !self.alive() || self.invuln > 0 {
+        // Enemy deaths.
+        for i in 0..self.enemies.len() {
+            let e = &mut self.enemies[i];
+            if e.occupied && e.interactable && e.life <= 0 {
+                e.on_death(&self.ecl, &mut self.world);
+                self.events.push(Event::Sfx("enep00"));
+            }
+        }
+        self.flush_spawns();
+
+        // Bullets / enemy bodies vs player.
+        if !matches!(self.state, PlayerState::Alive) || self.invuln > 0 {
             return;
         }
         let p = self.pos;
+        let radii: Vec<f32> = self.world.bullets.iter().map(|b| self.bullet_radius(b)).collect();
         let hit_bullet = self
+            .world
             .bullets
             .iter()
-            .any(|b| {
+            .zip(&radii)
+            .any(|(b, r)| {
                 let dx = b.pos[0] - p[0];
                 let dy = b.pos[1] - p[1];
-                let r = b.radius + 2.0;
-                dx * dx + dy * dy < r * r
+                let rr = r + 2.0;
+                dx * dx + dy * dy < rr * rr
             });
         let hit_body = self.enemies.iter().any(|e| {
+            if !e.occupied || !e.collidable || !e.interactable {
+                return false;
+            }
+            let r = (e.hitbox[0].max(e.hitbox[1])) / 1.5 / 2.0 + 2.0;
             let dx = e.pos[0] - p[0];
             let dy = e.pos[1] - p[1];
-            dx * dx + dy * dy < 18.0 * 18.0
+            dx * dx + dy * dy < r * r
         });
         if hit_bullet || hit_body {
             self.lives -= 1;
             self.bombs = 3;
-            self.bullets.clear();
+            self.world.bullets.clear();
             self.state = PlayerState::Dead(60);
             self.events.push(Event::Sfx("pldead00"));
         }
     }
 
-    fn draw(&self) -> Vec<DrawCmd> {
-        let mut cmds = Vec::with_capacity(64 + self.bullets.len());
+    fn drain_world_events(&mut self) {
+        let events: Vec<WorldEvent> = self.world.events.drain(..).collect();
+        for ev in events {
+            match ev {
+                WorldEvent::Sfx(idx) => {
+                    // SoundIdx -> our named sfx; a few common ones mapped.
+                    let name = match idx {
+                        0 => "plst00",
+                        1 => "enep00",
+                        5 => "power1",
+                        16 => "tan00",
+                        17 => "tan01",
+                        18 => "tan02",
+                        22 => "cat00",
+                        _ => "tan00",
+                    };
+                    self.events.push(Event::Sfx(name));
+                }
+                WorldEvent::SpellcardStart(_name) => {
+                    self.spell_active = true;
+                    self.world.bullets.clear();
+                    self.events.push(Event::Sfx("cat00"));
+                }
+                WorldEvent::SpellcardEnd => {
+                    self.spell_active = false;
+                    self.world.bullets.clear();
+                }
+                WorldEvent::BulletCancel => self.world.bullets.clear(),
+                WorldEvent::BossSet(present) => {
+                    if present && !self.boss_bgm_started {
+                        self.boss_bgm_started = true;
+                        self.events.push(Event::Bgm("th06_03.wav"));
+                    }
+                }
+                WorldEvent::EnemyDeath(_pos) => {
+                    self.events.push(Event::Sfx("enep00"));
+                }
+            }
+        }
+    }
 
-        // Playfield backdrop: near-black with a faint red night tint.
-        let spell_dark = matches!(self.boss.as_ref().map(|b| &b.phase), Some(BossPhase::Spell));
-        let base = if spell_dark { 0.02 } else { 0.07 };
+    fn draw(&self) -> Vec<DrawCmd> {
+        let mut cmds = Vec::with_capacity(96 + self.world.bullets.len());
+        let base = if self.spell_active { 0.02 } else { 0.07 };
         cmds.push(rect(
             [FIELD_X, FIELD_Y, FIELD_W, FIELD_H],
             [base, base * 0.6, base * 0.9, 1.0],
         ));
 
-        // Enemies.
-        for e in &self.enemies {
-            let frames = match e.kind {
-                FairyKind::Blue => &FAIRY_BLUE,
-                FairyKind::Pink => &FAIRY_PINK,
-            };
-            let f = frames[(self.anim / 8) as usize % 4];
-            cmds.push(sprite_at(f, e.pos, 1.0));
+        // Enemies via their ANM state.
+        for (e, anim) in self.enemies.iter().zip(&self.anims) {
+            if !e.occupied || e.invisible {
+                continue;
+            }
+            let Some(anim) = anim else { continue };
+            let Some(script) = self.enemy_scripts.get(&e.anm_script) else { continue };
+            let Some(idx) = anim.sprite else { continue };
+            let Some(sp) = script.sprites.get(&idx) else { continue };
+            let [tw, th] = script.tex_size;
+            let w = sp.width * anim.scale[0].abs();
+            let h = sp.height * anim.scale[1].abs();
+            // Sprite coordinates can exceed the sheet edge (Rumia); wrap.
+            let sx = sp.x % tw;
+            let sy = sp.y % th;
+            let (mut u0, mut u1) = (sx / tw, (sx + sp.width) / tw);
+            if anim.flip_x {
+                std::mem::swap(&mut u0, &mut u1);
+            }
+            cmds.push(DrawCmd {
+                tex: script.tex,
+                dst: [
+                    FIELD_X + e.pos[0] - w / 2.0,
+                    FIELD_Y + e.pos[1] - h / 2.0,
+                    w,
+                    h,
+                ],
+                src: [u0, sy / th, u1, (sy + sp.height) / th],
+                tint: [1.0, 1.0, 1.0, anim.alpha],
+            });
         }
 
-        // Boss.
-        if let Some(b) = &self.boss {
-            let s = match b.phase {
-                BossPhase::Spell => RUMIA_CAST,
-                _ => RUMIA_IDLE[(self.anim / 10) as usize % 4],
-            };
-            cmds.push(sprite_at(s, b.pos, 1.0));
-            // HP bar.
-            let max = 1800.0;
-            let frac = (b.hp.max(0) as f32 / max).clamp(0.0, 1.0);
-            cmds.push(rect([FIELD_X + 8.0, FIELD_Y + 4.0, (FIELD_W - 16.0) * frac, 4.0], [0.9, 0.15, 0.15, 0.9]));
+        // Boss HP bar.
+        if let Some(boss) = self.enemies.iter().find(|e| e.is_boss && e.occupied) {
+            let frac = (boss.life.max(0) as f32 / boss.max_life.max(1) as f32).clamp(0.0, 1.0);
+            cmds.push(rect(
+                [FIELD_X + 8.0, FIELD_Y + 4.0, (FIELD_W - 16.0) * frac, 4.0],
+                [0.9, 0.15, 0.15, 0.9],
+            ));
         }
 
         // Player shots.
         for s in &self.shots {
-            let spr = if s.needle { NEEDLE } else { AMULET };
-            cmds.push(sprite_at(spr, s.pos, 0.85));
+            let sp = if s.needle { NEEDLE } else { AMULET };
+            cmds.push(sprite_at(sp, s.pos, 0.85));
         }
 
         // Player.
-        if self.alive() || matches!(self.state, PlayerState::Cleared(_)) {
+        if matches!(self.state, PlayerState::Alive | PlayerState::Cleared(_)) {
             let blink = self.invuln > 0 && (self.anim / 4) % 2 == 0;
             if !blink {
                 cmds.push(sprite_at(REIMU_IDLE[(self.anim / 8) as usize % 4], self.pos, 1.0));
             }
         }
 
-        // Bomb effect: expanding orbs orbiting the player.
+        // Bomb orbs.
         if self.bombing > 0 {
             let t = (120 - self.bombing) as f32;
             for i in 0..6 {
@@ -633,9 +687,21 @@ impl Stage {
             }
         }
 
-        // Enemy bullets on top.
-        for b in &self.bullets {
-            cmds.push(sprite_at(b.sprite, b.pos, 1.0));
+        // Bullets from the original scripts.
+        let [tw, th] = self.bullet_tex_size;
+        for b in &self.world.bullets {
+            let Some(sp) = self.bullet_sprites.get(&b.sprite) else { continue };
+            cmds.push(DrawCmd {
+                tex: TEX_BULLET,
+                dst: [
+                    FIELD_X + b.pos[0] - sp.width / 2.0,
+                    FIELD_Y + b.pos[1] - sp.height / 2.0,
+                    sp.width,
+                    sp.height,
+                ],
+                src: [sp.x / tw, sp.y / th, (sp.x + sp.width) / tw, (sp.y + sp.height) / th],
+                tint: [1.0, 1.0, 1.0, 1.0],
+            });
         }
 
         self.draw_hud(&mut cmds);
@@ -644,29 +710,24 @@ impl Stage {
 
     fn draw_hud(&self, cmds: &mut Vec<DrawCmd>) {
         let border = [0.12, 0.05, 0.08, 1.0];
-        // Opaque borders mask sprites leaving the playfield.
         cmds.push(rect([0.0, 0.0, 640.0, FIELD_Y], border));
         cmds.push(rect([0.0, FIELD_Y + FIELD_H, 640.0, 480.0 - FIELD_Y - FIELD_H], border));
         cmds.push(rect([0.0, 0.0, FIELD_X, 480.0], border));
         cmds.push(rect([FIELD_X + FIELD_W, 0.0, 640.0 - FIELD_X - FIELD_W, 480.0], border));
 
         let sx = FIELD_X + FIELD_W + 24.0;
-        // Lives.
         cmds.push(hud_sprite(HUD_PLAYER_LABEL, [sx, 120.0]));
         for i in 0..self.lives.max(0) {
             cmds.push(hud_sprite(HUD_STAR_RED, [sx + 40.0 + i as f32 * 18.0, 120.0]));
         }
-        // Bombs.
         cmds.push(hud_sprite(HUD_BOMB_LABEL, [sx, 144.0]));
         for i in 0..self.bombs.max(0) {
             cmds.push(hud_sprite(HUD_STAR_GREEN, [sx + 40.0 + i as f32 * 18.0, 144.0]));
         }
-        // Emblem.
         let mut logo = hud_sprite(HUD_LOGO, [sx - 4.0, 300.0]);
         logo.tint = [1.0, 1.0, 1.0, 0.85];
         cmds.push(logo);
 
-        // End-state overlays: dim the field.
         match self.state {
             PlayerState::GameOver(_) => {
                 cmds.push(rect([FIELD_X, FIELD_Y, FIELD_W, FIELD_H], [0.0, 0.0, 0.0, 0.6]));
@@ -679,7 +740,6 @@ impl Stage {
     }
 }
 
-/// Solid-color rectangle in screen pixels (white texture x tint).
 fn rect(dst: [f32; 4], tint: [f32; 4]) -> DrawCmd {
     DrawCmd { tex: TEX_WHITE, dst, src: [0.25, 0.25, 0.75, 0.75], tint }
 }

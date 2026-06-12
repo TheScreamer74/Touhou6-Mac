@@ -1,4 +1,5 @@
 mod anm_vm;
+mod ecl_vm;
 mod stage;
 mod title;
 
@@ -10,8 +11,29 @@ use th06_engine::{compose_rgba, Engine, Frame, Input, Key};
 use th06_formats::anm0::Anm0;
 use th06_formats::pbg3::Pbg3;
 
+use th06_formats::ecl::Ecl;
+
 use stage::{Event, Stage};
 use title::{Title, TitleAction};
+
+/// Everything needed to build a fresh stage 1 run.
+struct StageAssets {
+    ecl_data: Vec<u8>,
+    stg1enm: Anm0,
+    stg1enm2: Anm0,
+    etama: Anm0,
+}
+
+impl StageAssets {
+    fn new_stage(&self) -> Stage {
+        let ecl = Ecl::parse(self.ecl_data.clone()).expect("parse ecl");
+        let scripts = stage::build_enemy_scripts(&[
+            (&self.stg1enm.entries[0], stage::TEX_FAIRY),
+            (&self.stg1enm2.entries[0], stage::TEX_RUMIA),
+        ]);
+        Stage::new(ecl, scripts, &self.etama.entries[0])
+    }
+}
 
 /// All files from one PBG3 archive, keyed by entry name.
 fn load_archive(path: &Path) -> HashMap<String, Vec<u8>> {
@@ -63,6 +85,7 @@ struct Game {
     title: Title,
     audio: Option<Audio>,
     bgm_dir: PathBuf,
+    assets: StageAssets,
 }
 
 const SFX_NAMES: [&str; 10] = [
@@ -83,7 +106,7 @@ impl Game {
                 let (cmds, action) = self.title.update(input);
                 match action {
                     TitleAction::StartGame => {
-                        self.scene = Scene::Stage(Box::new(Stage::new()));
+                        self.scene = Scene::Stage(Box::new(self.assets.new_stage()));
                         if let Some(a) = &self.audio {
                             a.play_sfx("plst00");
                         }
@@ -186,10 +209,17 @@ fn main() {
         }
     }
 
+    let assets = StageAssets {
+        ecl_data: st["ecldata1.ecl"].clone(),
+        stg1enm: Anm0::parse(&st["stg1enm.anm"]).expect("parse stg1enm"),
+        stg1enm2: Anm0::parse(&st["stg1enm2.anm"]).expect("parse stg1enm2"),
+        etama: Anm0::parse(&cm["etama3.anm"]).expect("parse etama3"),
+    };
+
     let mut game = Game {
         scene: match scene_arg.as_str() {
             "stage" => {
-                let mut s = Stage::new();
+                let mut s = assets.new_stage();
                 if let Some(l) = debug_lives {
                     s.set_lives(l);
                 }
@@ -200,6 +230,7 @@ fn main() {
         title,
         audio: if screenshot.is_some() { None } else { audio },
         bgm_dir: game_dir.join("bgm"),
+        assets,
     };
 
     if let Some(out) = screenshot {

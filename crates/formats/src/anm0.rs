@@ -19,6 +19,8 @@ pub struct Instr {
     pub time: u16,
     pub opcode: u8,
     pub args: Vec<u8>,
+    /// Byte offset from script start (jump targets are expressed in these).
+    pub offset: u32,
 }
 
 impl Instr {
@@ -139,6 +141,7 @@ impl Anm0 {
 
     fn parse_script(data: &[u8], mut off: usize) -> Result<Vec<Instr>, Error> {
         let mut instrs = Vec::new();
+        let start = off;
         while off + 4 <= data.len() {
             let time = u16::from_le_bytes(data[off..off + 2].try_into().unwrap());
             let opcode = data[off + 2];
@@ -147,9 +150,10 @@ impl Anm0 {
                 .get(off + 4..off + 4 + length)
                 .ok_or(Error::Truncated)?
                 .to_vec();
+            let offset = (off - start) as u32;
             off += 4 + length;
             let is_end = opcode == 0 && time == 0;
-            instrs.push(Instr { time, opcode, args });
+            instrs.push(Instr { time, opcode, args, offset });
             if is_end {
                 break;
             }
