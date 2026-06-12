@@ -7,13 +7,21 @@
 
 use std::collections::HashMap;
 
-use th06_engine::{DrawCmd, Frame, Input, Key};
+use th06_engine::{DrawCmd, Input, Key};
 use th06_formats::anm0::{Entry, Sprite};
 
 use crate::anm_vm::AnmRunner;
 
 const MAIN_ITEMS: usize = 8;
+const START_ITEM: usize = 0;
 const QUIT_ITEM: usize = 7;
+
+#[derive(PartialEq)]
+pub enum TitleAction {
+    None,
+    StartGame,
+    Quit,
+}
 
 pub struct Title {
     runners: Vec<AnmRunner>,
@@ -47,7 +55,8 @@ impl Title {
         }
     }
 
-    pub fn update(&mut self, input: &Input) -> Frame {
+    pub fn update(&mut self, input: &Input) -> (Vec<DrawCmd>, TitleAction) {
+        let mut action = TitleAction::None;
         if self.quitting.is_none() {
             if input.pressed(Key::Up) {
                 self.cursor = (self.cursor + MAIN_ITEMS - 1) % MAIN_ITEMS;
@@ -62,10 +71,12 @@ impl Title {
                     self.cursor = QUIT_ITEM;
                 }
             }
-            if (input.pressed(Key::Shoot) || input.pressed(Key::Enter))
-                && self.cursor == QUIT_ITEM
-            {
-                self.start_quit();
+            if input.pressed(Key::Shoot) || input.pressed(Key::Enter) {
+                match self.cursor {
+                    START_ITEM => action = TitleAction::StartGame,
+                    QUIT_ITEM => self.start_quit(),
+                    _ => {} // other entries not implemented yet
+                }
             }
         }
 
@@ -73,15 +84,23 @@ impl Title {
             r.tick();
         }
 
-        let quit = match &mut self.quitting {
-            Some(frames) => {
-                *frames -= 1;
-                *frames == 0
+        if let Some(frames) = &mut self.quitting {
+            *frames -= 1;
+            if *frames == 0 {
+                action = TitleAction::Quit;
             }
-            None => false,
-        };
+        }
 
-        Frame { cmds: self.draw(), quit }
+        (self.draw(), action)
+    }
+
+    /// Re-arm the entrance animation (returning from a game run).
+    pub fn reset(&mut self) {
+        for r in &mut self.runners {
+            r.interrupt(2);
+        }
+        self.cursor = 0;
+        self.quitting = None;
     }
 
     fn start_quit(&mut self) {

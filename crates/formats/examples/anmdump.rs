@@ -10,7 +10,7 @@ fn main() {
             entry.width, entry.height, entry.format, entry.name, entry.alpha_name,
             entry.sprites.len(), entry.scripts.len()
         );
-        for s in entry.sprites.iter().take(4) {
+        for s in entry.sprites.iter() {
             println!("  sprite {}: ({}, {}) {}x{}", s.index, s.x, s.y, s.width, s.height);
         }
         for (id, instrs) in entry.scripts.iter() {

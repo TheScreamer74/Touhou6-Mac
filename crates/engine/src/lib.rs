@@ -1,6 +1,8 @@
 //! Minimal wgpu sprite renderer: textured quads in a 640x480 logical space,
 //! headless render-to-image for verification plus a winit window mode.
 
+pub mod audio;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -384,6 +386,14 @@ pub struct Input {
 }
 
 impl Input {
+    /// Build an input state by hand (used by headless/scripted runs).
+    pub fn synthetic(held: &[Key], pressed: &[Key]) -> Self {
+        Self {
+            held: held.iter().copied().collect(),
+            pressed: pressed.iter().copied().collect(),
+        }
+    }
+
     pub fn held(&self, key: Key) -> bool {
         self.held.contains(&key)
     }
