@@ -71,6 +71,8 @@ pub struct BulletProps {
     pub aim_mode: u16,
     pub flags: u32,
     pub sfx: i32,
+    pub ex_ints: [i32; 4],
+    pub ex_floats: [f32; 4],
 }
 
 impl Default for BulletProps {
@@ -88,6 +90,8 @@ impl Default for BulletProps {
             aim_mode: 0,
             flags: 0,
             sfx: -1,
+            ex_ints: [0; 4],
+            ex_floats: [0.0; 4],
         }
     }
 }
@@ -99,6 +103,35 @@ pub struct Bullet {
     /// etama3 sprite index (type base + color offset).
     pub sprite: u32,
     pub spawn_delay: u32,
+    pub timer: i32,
+    pub ex_flags: u32,
+    /// flag 0x10: acceleration vector; 0x20: (speed delta, angle delta);
+    /// 0x40: (rotation, new speed) every `ex_int0` frames, `ex_int1` times.
+    pub ex_accel: [f32; 2],
+    pub ex_f: [f32; 2],
+    pub ex_int0: i32,
+    pub ex_int1: i32,
+    pub ex_count: i32,
+}
+
+/// A laser beam (Laser in the original). The lit segment runs from
+/// `start_offset` to `end_offset` along `angle` from `pos`.
+pub struct Laser {
+    pub in_use: bool,
+    pub pos: [f32; 2],
+    pub angle: f32,
+    pub speed: f32,
+    pub start_offset: f32,
+    pub end_offset: f32,
+    pub start_length: f32,
+    pub width: f32,
+    pub start_time: i32,
+    pub duration: i32,
+    pub despawn_duration: i32,
+    pub hitbox_start: i32,
+    pub state: u8, // 0 warmup, 1 active, 2 despawning
+    pub timer: i32,
+    pub color: i32,
 }
 
 pub struct Enemy {
@@ -135,6 +168,8 @@ pub struct Enemy {
     shoot_timer: i32,
     interrupts: [i32; 8],
     run_interrupt: i32,
+    lasers: [Option<usize>; 32],
+    laser_store: usize,
     death_callback: i32,
     life_cb_threshold: i32,
     life_cb_sub: i32,
@@ -200,6 +235,8 @@ impl Default for Enemy {
             shoot_timer: 0,
             interrupts: [-1; 8],
             run_interrupt: -1,
+            lasers: [None; 32],
+            laser_store: 0,
             death_callback: -1,
             life_cb_threshold: -1,
             life_cb_sub: -1,
@@ -246,10 +283,23 @@ pub struct World {
     pub rank: i32,
     pub player_pos: [f32; 2],
     pub bullets: Vec<Bullet>,
+    pub lasers: Vec<Laser>,
     pub events: Vec<WorldEvent>,
     pub pending_spawns: Vec<SpawnReq>,
     pub kill_trash: bool,
     pub boss_present: bool,
+}
+
+impl World {
+    fn alloc_laser(&mut self, laser: Laser) -> usize {
+        if let Some(i) = self.lasers.iter().position(|l| !l.in_use) {
+            self.lasers[i] = laser;
+            i
+        } else {
+            self.lasers.push(laser);
+            self.lasers.len() - 1
+        }
+    }
 }
 
 pub struct SpawnReq {
@@ -804,7 +854,23 @@ impl Enemy {
                 self.shoot_offset[0] = self.get_f32(instr.arg_f32(0), world);
                 self.shoot_offset[1] = self.get_f32(instr.arg_f32(1), world);
             }
-            82 => {} // BULLETEFFECTS (ex-flag parameters) — not yet
+            82 => {
+                // BULLETEFFECTS: ex parameters consumed by the next shots.
+                let ints = [
+                    self.get_i32(instr.arg_i32(0), world),
+                    self.get_i32(instr.arg_i32(1), world),
+                    self.get_i32(instr.arg_i32(2), world),
+                    self.get_i32(instr.arg_i32(3), world),
+                ];
+                let floats = [
+                    self.get_f32(instr.arg_f32(4), world),
+                    self.get_f32(instr.arg_f32(5), world),
+                    self.get_f32(instr.arg_f32(6), world),
+                    self.get_f32(instr.arg_f32(7), world),
+                ];
+                self.bullet_props.ex_ints = ints;
+                self.bullet_props.ex_floats = floats;
+            }
             83 => world.events.push(WorldEvent::BulletCancel),
             84 => {
                 // BULLETSOUND
@@ -816,7 +882,87 @@ impl Enemy {
                     self.bullet_props.flags &= !0x200;
                 }
             }
-            85..=92 | 134 => {} // lasers — stage 1 does not need them yet
+            85 | 86 => {
+                // LASERCREATE / LASERCREATEAIMED
+                let mut angle = self.get_f32(instr.arg_f32(1), world);
+                if instr.opcode == 86 {
+                    angle += self.angle_to_player(world);
+                }
+                let laser = Laser {
+                    in_use: true,
+                    pos: [self.pos[0] + self.shoot_offset[0], self.pos[1] + self.shoot_offset[1]],
+                    angle,
+                    speed: self.get_f32(instr.arg_f32(2), world),
+                    start_offset: self.get_f32(instr.arg_f32(3), world),
+                    end_offset: self.get_f32(instr.arg_f32(4), world),
+                    start_length: self.get_f32(instr.arg_f32(5), world),
+                    width: instr.arg_f32(6),
+                    start_time: instr.arg_i32(7),
+                    duration: instr.arg_i32(8),
+                    despawn_duration: instr.arg_i32(9),
+                    hitbox_start: instr.arg_i32(10),
+                    state: if instr.arg_i32(7) == 0 { 1 } else { 0 },
+                    timer: 0,
+                    color: instr.arg_i16(2) as i32,
+                };
+                let idx = world.alloc_laser(laser);
+                self.lasers[self.laser_store & 31] = Some(idx);
+            }
+            87 => self.laser_store = self.get_i32(instr.arg_i32(0), world).max(0) as usize,
+            88 => {
+                // LASERROTATE
+                let slot = instr.arg_i32(0).clamp(0, 31) as usize;
+                let delta = self.get_f32(instr.arg_f32(1), world);
+                if let Some(idx) = self.lasers[slot] {
+                    if let Some(l) = world.lasers.get_mut(idx) {
+                        l.angle += delta;
+                    }
+                }
+            }
+            89 => {
+                // LASERROTATEFROMPLAYER
+                let slot = instr.arg_i32(0).clamp(0, 31) as usize;
+                let delta = self.get_f32(instr.arg_f32(1), world);
+                if let Some(idx) = self.lasers[slot] {
+                    let player = world.player_pos;
+                    if let Some(l) = world.lasers.get_mut(idx) {
+                        l.angle = (player[1] - l.pos[1]).atan2(player[0] - l.pos[0]) + delta;
+                    }
+                }
+            }
+            90 => {
+                // LASEROFFSET
+                let slot = instr.arg_i32(0).clamp(0, 31) as usize;
+                let dx = instr.arg_f32(1);
+                let dy = instr.arg_f32(2);
+                if let Some(idx) = self.lasers[slot] {
+                    if let Some(l) = world.lasers.get_mut(idx) {
+                        l.pos = [self.pos[0] + dx, self.pos[1] + dy];
+                    }
+                }
+            }
+            91 => {
+                // LASERTEST: cmp = 0 while the laser lives.
+                let slot = instr.arg_i32(0).clamp(0, 31) as usize;
+                let alive = self.lasers[slot]
+                    .and_then(|idx| world.lasers.get(idx))
+                    .map(|l| l.in_use)
+                    .unwrap_or(false);
+                self.ctx.cmp = if alive { 0 } else { 1 };
+            }
+            92 => {
+                // LASERCANCEL
+                let slot = instr.arg_i32(0).clamp(0, 31) as usize;
+                if let Some(idx) = self.lasers[slot] {
+                    if let Some(l) = world.lasers.get_mut(idx) {
+                        if l.in_use && l.state < 2 {
+                            l.state = 2;
+                            l.timer = 0;
+                        }
+                    }
+                }
+            }
+            134 => self.lasers = [None; 32], // LASERCLEARALL
             93 => {
                 // SPELLCARDSTART
                 world.events.push(WorldEvent::SpellcardStart(instr.arg_str(4)));
@@ -1231,12 +1377,40 @@ pub fn spawn_bullet_pattern(world: &mut World, props: &BulletProps, mirror: bool
             // Spawn-effect flags delay the live bullet slightly in the
             // original; approximated as a fixed delay.
             let spawn_delay = if props.flags & (2 | 4 | 8) != 0 { 8 } else { 0 };
+            // Ex-behavior setup, ported from SpawnSingleBullet.
+            let mut ex_accel = [0.0f32; 2];
+            let mut ex_f = [0.0f32; 2];
+            let mut ex_int0 = 0;
+            let mut ex_int1 = 0;
+            if props.flags & 0x10 != 0 {
+                let dir = if props.ex_floats[1] <= -999.0 { angle } else { props.ex_floats[1] };
+                ex_accel = [dir.cos() * props.ex_floats[0], dir.sin() * props.ex_floats[0]];
+                ex_int0 = if props.ex_ints[0] > 0 { props.ex_ints[0] } else { 99999 };
+            } else if props.flags & 0x20 != 0 {
+                ex_f = [props.ex_floats[0], props.ex_floats[1]];
+                ex_int0 = props.ex_ints[0];
+            }
+            if props.flags & 0x40 != 0 {
+                ex_f = [
+                    props.ex_floats[0],
+                    if props.ex_floats[1] >= 0.0 { props.ex_floats[1] } else { speed },
+                ];
+                ex_int0 = props.ex_ints[0];
+                ex_int1 = props.ex_ints[1];
+            }
             world.bullets.push(Bullet {
                 pos: props.pos,
                 angle,
                 speed,
                 sprite: base + props.sprite_offset.max(0) as u32,
                 spawn_delay,
+                timer: 0,
+                ex_flags: props.flags,
+                ex_accel,
+                ex_f,
+                ex_int0,
+                ex_int1,
+                ex_count: 0,
             });
         }
     }

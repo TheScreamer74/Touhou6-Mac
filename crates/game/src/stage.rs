@@ -137,6 +137,7 @@ impl Stage {
                 rank: 16,
                 player_pos: [FIELD_W / 2.0, FIELD_H - 40.0],
                 bullets: Vec::new(),
+                lasers: Vec::new(),
                 events: Vec::new(),
                 pending_spawns: Vec::new(),
                 kill_trash: false,
@@ -476,6 +477,42 @@ impl Stage {
 
     fn update_bullets(&mut self) {
         for b in &mut self.world.bullets {
+            b.timer += 1;
+            // Ex behaviors, ported from BulletManager::OnUpdate.
+            if b.ex_flags & 1 != 0 {
+                if b.timer <= 16 {
+                    // Spawn boost: extra speed decaying 5 -> 0 over 16 frames.
+                    let boost = 5.0 - b.timer as f32 * 5.0 / 16.0;
+                    b.pos[0] += b.angle.cos() * boost;
+                    b.pos[1] += b.angle.sin() * boost;
+                } else {
+                    b.ex_flags &= !1;
+                }
+            } else if b.ex_flags & 0x10 != 0 {
+                if b.timer >= b.ex_int0 {
+                    b.ex_flags &= !0x10;
+                } else {
+                    let vx = b.angle.cos() * b.speed + b.ex_accel[0];
+                    let vy = b.angle.sin() * b.speed + b.ex_accel[1];
+                    b.speed = (vx * vx + vy * vy).sqrt();
+                    b.angle = vy.atan2(vx);
+                }
+            } else if b.ex_flags & 0x20 != 0 {
+                if b.timer >= b.ex_int0 {
+                    b.ex_flags &= !0x20;
+                } else {
+                    b.angle += b.ex_f[1];
+                    b.speed += b.ex_f[0];
+                }
+            }
+            if b.ex_flags & 0x40 != 0 && b.ex_int0 > 0 && b.timer >= b.ex_int0 * (b.ex_count + 1) {
+                b.ex_count += 1;
+                if b.ex_count >= b.ex_int1 {
+                    b.ex_flags &= !0x40;
+                }
+                b.angle += b.ex_f[0];
+                b.speed = b.ex_f[1];
+            }
             let factor = if b.spawn_delay > 0 {
                 b.spawn_delay -= 1;
                 1.0 / 2.5
@@ -488,6 +525,40 @@ impl Stage {
         self.world.bullets.retain(|b| {
             b.pos[0] > -20.0 && b.pos[0] < FIELD_W + 20.0 && b.pos[1] > -20.0 && b.pos[1] < FIELD_H + 20.0
         });
+
+        // Lasers (state machine from BulletManager::OnUpdate).
+        for l in &mut self.world.lasers {
+            if !l.in_use {
+                continue;
+            }
+            l.end_offset += l.speed;
+            if l.start_length < l.end_offset - l.start_offset {
+                l.start_offset = l.end_offset - l.start_length;
+            }
+            if l.start_offset < 0.0 {
+                l.start_offset = 0.0;
+            }
+            l.timer += 1;
+            match l.state {
+                0 => {
+                    if l.timer >= l.start_time {
+                        l.state = 1;
+                        l.timer = 0;
+                    }
+                }
+                1 => {
+                    if l.timer >= l.duration {
+                        l.state = 2;
+                        l.timer = 0;
+                    }
+                }
+                _ => {
+                    if l.timer >= l.despawn_duration {
+                        l.in_use = false;
+                    }
+                }
+            }
+        }
     }
 
     fn bullet_radius(&self, b: &Bullet) -> f32 {
@@ -561,12 +632,41 @@ impl Stage {
             let dy = e.pos[1] - p[1];
             dx * dx + dy * dy < r * r
         });
-        if hit_bullet || hit_body {
+        let hit_laser = self.world.lasers.iter().any(|l| {
+            if !l.in_use {
+                return false;
+            }
+            let hitbox_live = match l.state {
+                0 => l.timer >= l.hitbox_start,
+                1 => true,
+                _ => false,
+            };
+            if !hitbox_live {
+                return false;
+            }
+            // Distance from the player to the lit segment.
+            let (dx, dy) = (p[0] - l.pos[0], p[1] - l.pos[1]);
+            let (c, s) = (l.angle.cos(), l.angle.sin());
+            let along = dx * c + dy * s;
+            let across = (-dx * s + dy * c).abs();
+            along >= l.start_offset && along <= l.end_offset && across < l.width / 4.0 + 2.0
+        });
+        if hit_bullet || hit_body || hit_laser {
             self.lives -= 1;
             self.bombs = 3;
             self.world.bullets.clear();
+            self.cancel_lasers();
             self.state = PlayerState::Dead(60);
             self.events.push(Event::Sfx("pldead00"));
+        }
+    }
+
+    fn cancel_lasers(&mut self) {
+        for l in &mut self.world.lasers {
+            if l.in_use && l.state < 2 {
+                l.state = 2;
+                l.timer = 0;
+            }
         }
     }
 
@@ -597,7 +697,10 @@ impl Stage {
                     self.spell_active = false;
                     self.world.bullets.clear();
                 }
-                WorldEvent::BulletCancel => self.world.bullets.clear(),
+                WorldEvent::BulletCancel => {
+                    self.world.bullets.clear();
+                    self.cancel_lasers();
+                }
                 WorldEvent::BossSet(present) => {
                     if present && !self.boss_bgm_started {
                         self.boss_bgm_started = true;
@@ -648,6 +751,7 @@ impl Stage {
                 ],
                 src: [u0, sy / th, u1, (sy + sp.height) / th],
                 tint: [1.0, 1.0, 1.0, anim.alpha],
+                rot: 0.0,
             });
         }
 
@@ -701,6 +805,43 @@ impl Stage {
                 ],
                 src: [sp.x / tw, sp.y / th, (sp.x + sp.width) / tw, (sp.y + sp.height) / th],
                 tint: [1.0, 1.0, 1.0, 1.0],
+                rot: 0.0,
+            });
+        }
+
+        // Lasers: a rotated quad over the lit segment, tinted by color.
+        for l in &self.world.lasers {
+            if !l.in_use {
+                continue;
+            }
+            let len = (l.end_offset - l.start_offset).max(0.0);
+            if len <= 0.0 {
+                continue;
+            }
+            let width = match l.state {
+                0 => 1.2 + (l.width - 1.2) * (l.timer as f32 / l.start_time.max(1) as f32),
+                1 => l.width,
+                _ => l.width * (1.0 - l.timer as f32 / l.despawn_duration.max(1) as f32),
+            }
+            .max(0.0);
+            let mid = l.start_offset + len / 2.0;
+            let cx = FIELD_X + l.pos[0] + l.angle.cos() * mid;
+            let cy = FIELD_Y + l.pos[1] + l.angle.sin() * mid;
+            let tint = LASER_COLORS[(l.color as usize) % LASER_COLORS.len()];
+            cmds.push(DrawCmd {
+                tex: TEX_WHITE,
+                dst: [cx - len / 2.0, cy - width / 2.0, len, width],
+                src: [0.25, 0.25, 0.75, 0.75],
+                tint,
+                rot: l.angle,
+            });
+            // Bright core.
+            cmds.push(DrawCmd {
+                tex: TEX_WHITE,
+                dst: [cx - len / 2.0, cy - width / 6.0, len, width / 3.0],
+                src: [0.25, 0.25, 0.75, 0.75],
+                tint: [1.0, 1.0, 1.0, 0.9],
+                rot: l.angle,
             });
         }
 
@@ -740,8 +881,28 @@ impl Stage {
     }
 }
 
+/// th06 bullet color palette, approximated (index = color offset).
+const LASER_COLORS: [[f32; 4]; 16] = [
+    [0.4, 0.4, 0.4, 0.8],
+    [0.9, 0.2, 0.2, 0.8],
+    [1.0, 0.4, 0.6, 0.8],
+    [0.7, 0.3, 0.9, 0.8],
+    [0.5, 0.3, 1.0, 0.8],
+    [0.3, 0.3, 1.0, 0.8],
+    [0.3, 0.6, 1.0, 0.8],
+    [0.3, 0.9, 1.0, 0.8],
+    [0.3, 1.0, 0.8, 0.8],
+    [0.3, 1.0, 0.4, 0.8],
+    [0.6, 1.0, 0.3, 0.8],
+    [0.8, 1.0, 0.3, 0.8],
+    [1.0, 1.0, 0.3, 0.8],
+    [1.0, 0.8, 0.3, 0.8],
+    [1.0, 0.6, 0.3, 0.8],
+    [1.0, 1.0, 1.0, 0.8],
+];
+
 fn rect(dst: [f32; 4], tint: [f32; 4]) -> DrawCmd {
-    DrawCmd { tex: TEX_WHITE, dst, src: [0.25, 0.25, 0.75, 0.75], tint }
+    DrawCmd { tex: TEX_WHITE, dst, src: [0.25, 0.25, 0.75, 0.75], tint, rot: 0.0 }
 }
 
 fn sprite_at(s: SpriteRef, field_pos: [f32; 2], alpha: f32) -> DrawCmd {
@@ -751,6 +912,7 @@ fn sprite_at(s: SpriteRef, field_pos: [f32; 2], alpha: f32) -> DrawCmd {
         dst: [FIELD_X + field_pos[0] - w / 2.0, FIELD_Y + field_pos[1] - h / 2.0, w, h],
         src: [x / 256.0, y / 256.0, (x + w) / 256.0, (y + h) / 256.0],
         tint: [1.0, 1.0, 1.0, alpha],
+        rot: 0.0,
     }
 }
 
@@ -761,5 +923,6 @@ fn hud_sprite(s: SpriteRef, screen_pos: [f32; 2]) -> DrawCmd {
         dst: [screen_pos[0], screen_pos[1], w, h],
         src: [x / 256.0, y / 256.0, (x + w) / 256.0, (y + h) / 256.0],
         tint: [1.0, 1.0, 1.0, 1.0],
+        rot: 0.0,
     }
 }

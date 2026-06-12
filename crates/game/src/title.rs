@@ -117,6 +117,7 @@ impl Title {
             dst: [0.0, 0.0, th06_engine::SCREEN_W as f32, th06_engine::SCREEN_H as f32],
             src: [0.0, 0.0, 1.0, 1.0],
             tint: [1.0, 1.0, 1.0, 1.0],
+            rot: 0.0,
         }];
         let [tw, th] = self.tex_size;
         for (i, r) in self.runners.iter().enumerate() {
@@ -142,6 +143,7 @@ impl Title {
                 dst: [x, y, w, h],
                 src: [sp.x / tw, sp.y / th, (sp.x + sp.width) / tw, (sp.y + sp.height) / th],
                 tint: [c, c, c, r.alpha],
+                rot: 0.0,
             });
         }
         cmds

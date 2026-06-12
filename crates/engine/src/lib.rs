@@ -51,13 +51,15 @@ struct Vertex {
 }
 
 /// One textured quad. `dst` is x, y, w, h in 640x480 screen pixels;
-/// `src` is u0, v0, u1, v1 in normalized texture coordinates.
+/// `src` is u0, v0, u1, v1 in normalized texture coordinates. `rot`
+/// rotates the quad around its center (radians, clockwise).
 #[derive(Clone, Copy)]
 pub struct DrawCmd {
     pub tex: usize,
     pub dst: [f32; 4],
     pub src: [f32; 4],
     pub tint: [f32; 4],
+    pub rot: f32,
 }
 
 pub struct Texture {
@@ -195,19 +197,30 @@ impl Engine {
         for c in cmds {
             let [x, y, w, h] = c.dst;
             let [u0, v0, u1, v1] = c.src;
+            // Rotate corners around the quad center in screen space.
+            let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+            let (sin, cos) = c.rot.sin_cos();
+            let corner = |px: f32, py: f32| {
+                let (dx, dy) = (px - cx, py - cy);
+                (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+            };
             // Screen pixels -> NDC (y down in screen space).
             let nx = |px: f32| px / SCREEN_W as f32 * 2.0 - 1.0;
             let ny = |py: f32| 1.0 - py / SCREEN_H as f32 * 2.0;
+            let p00 = corner(x, y);
+            let p10 = corner(x + w, y);
+            let p11 = corner(x + w, y + h);
+            let p01 = corner(x, y + h);
             let quad = [
-                ([nx(x), ny(y)], [u0, v0]),
-                ([nx(x + w), ny(y)], [u1, v0]),
-                ([nx(x + w), ny(y + h)], [u1, v1]),
-                ([nx(x), ny(y)], [u0, v0]),
-                ([nx(x + w), ny(y + h)], [u1, v1]),
-                ([nx(x), ny(y + h)], [u0, v1]),
+                (p00, [u0, v0]),
+                (p10, [u1, v0]),
+                (p11, [u1, v1]),
+                (p00, [u0, v0]),
+                (p11, [u1, v1]),
+                (p01, [u0, v1]),
             ];
-            for (pos, uv) in quad {
-                verts.push(Vertex { pos, uv, tint: c.tint });
+            for ((px, py), uv) in quad {
+                verts.push(Vertex { pos: [nx(px), ny(py)], uv, tint: c.tint });
             }
         }
         verts
