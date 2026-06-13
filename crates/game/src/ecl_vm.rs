@@ -268,7 +268,8 @@ impl Default for Enemy {
 
 pub enum WorldEvent {
     Sfx(i32),
-    SpellcardStart(String),
+    /// Spell card declared: (spell id, raw Shift-JIS name bytes).
+    SpellcardStart(i32, Vec<u8>),
     SpellcardEnd,
     BulletCancel,
     BossSet(bool),
@@ -965,8 +966,13 @@ impl Enemy {
             }
             134 => self.lasers = [None; 32], // LASERCLEARALL
             93 => {
-                // SPELLCARDSTART
-                world.events.push(WorldEvent::SpellcardStart(instr.arg_str(4)));
+                // SPELLCARDSTART: id at byte 2, Shift-JIS name from byte 4.
+                let id = instr.arg_i16(2) as i32;
+                let name = instr.args.get(4..).map(|b| {
+                    let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+                    b[..end].to_vec()
+                }).unwrap_or_default();
+                world.events.push(WorldEvent::SpellcardStart(id, name));
                 world.events.push(WorldEvent::BulletCancel);
                 self.rank_speed_low = -0.5;
                 self.rank_speed_high = 0.5;

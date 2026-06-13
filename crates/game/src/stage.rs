@@ -74,6 +74,18 @@ struct Item {
     kind: i32, // 0 power small, 1 point, 2 power big, 3 bomb, 4 full, 5 life
 }
 
+/// Spell card names in English, indexed by the ECL spell id (op93). Only
+/// stage 1's are filled in; the in-game names are Shift-JIS and cannot be
+/// drawn with the ASCII font.
+fn spellcard_name(id: i32) -> &'static str {
+    match id {
+        0 => "Moon Sign \"Moonlight Ray\"",
+        1 => "Night Sign \"Night Bird\"",
+        2 => "Dark Sign \"Demarcation\"",
+        _ => "Spell Card",
+    }
+}
+
 /// Item drop pattern for ITEM_RANDOM_ITEM enemies (g_RandomItems).
 const RANDOM_ITEMS: [i32; 32] = [
     0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 2,
@@ -927,9 +939,9 @@ impl Stage {
                     };
                     self.events.push(Event::Sfx(name));
                 }
-                WorldEvent::SpellcardStart(name) => {
+                WorldEvent::SpellcardStart(id, _raw) => {
                     self.spell_active = true;
-                    self.spell_name = name;
+                    self.spell_name = spellcard_name(id).to_string();
                     self.spell_capturing = true;
                     self.world.bullets.clear();
                     self.events.push(Event::Sfx("cat00"));
