@@ -74,6 +74,16 @@ struct Item {
     kind: i32, // 0 power small, 1 point, 2 power big, 3 bomb, 4 full, 5 life
 }
 
+/// A short-lived visual puff (enemy death, item pickup, bullet cancel).
+struct Particle {
+    pos: [f32; 2],
+    vel: [f32; 2],
+    life: f32,
+    max_life: f32,
+    size: f32,
+    color: [f32; 3],
+}
+
 /// Spell card names in English, indexed by the ECL spell id (op93). Only
 /// stage 1's are filled in; the in-game names are Shift-JIS and cannot be
 /// drawn with the ASCII font.
@@ -181,6 +191,7 @@ pub struct Stage {
     state: PlayerState,
     shots: Vec<Shot>,
     items: Vec<Item>,
+    particles: Vec<Particle>,
     score: i64,
     rand_item_table: usize,
     rand_item_spawn: usize,
@@ -231,6 +242,7 @@ impl Stage {
             state: PlayerState::Alive,
             shots: Vec::new(),
             items: Vec::new(),
+            particles: Vec::new(),
             score: 0,
             rand_item_table: 0,
             rand_item_spawn: 0,
@@ -296,6 +308,7 @@ impl Stage {
         self.update_shots();
         self.update_bullets();
         self.update_items();
+        self.update_particles();
         self.collide();
         self.drain_world_events();
 
@@ -769,6 +782,7 @@ impl Stage {
             self.spell_capturing = false; // dying forfeits the capture
             self.world.bullets.clear();
             self.cancel_lasers();
+            self.spawn_burst(p, 20, 4.0, [1.0, 0.5, 0.5], 12.0);
             self.state = PlayerState::Dead(60);
             self.events.push(Event::Sfx("pldead00"));
         }
@@ -872,11 +886,39 @@ impl Stage {
         self.items.push(Item { pos, vy: -2.2, kind });
     }
 
+    /// Burst of fading puffs, used for enemy deaths and pickups.
+    fn spawn_burst(&mut self, pos: [f32; 2], count: u32, speed: f32, color: [f32; 3], size: f32) {
+        for i in 0..count {
+            let a = i as f32 / count as f32 * std::f32::consts::TAU
+                + self.world.rng.f32_in_range(0.5);
+            let s = speed * (0.5 + self.world.rng.f32_zero_to_one());
+            self.particles.push(Particle {
+                pos,
+                vel: [a.cos() * s, a.sin() * s],
+                life: 18.0,
+                max_life: 18.0,
+                size,
+                color,
+            });
+        }
+    }
+
+    fn update_particles(&mut self) {
+        for p in &mut self.particles {
+            p.pos[0] += p.vel[0];
+            p.pos[1] += p.vel[1];
+            p.vel[0] *= 0.86;
+            p.vel[1] *= 0.86;
+            p.life -= 1.0;
+        }
+        self.particles.retain(|p| p.life > 0.0);
+    }
+
     fn update_items(&mut self) {
         let player = self.pos;
         let alive = matches!(self.state, PlayerState::Alive);
         let magnet = alive && self.world.power >= 128 && player[1] < 128.0;
-        let mut collected: Vec<i32> = Vec::new();
+        let mut collected: Vec<(i32, [f32; 2])> = Vec::new();
         for it in &mut self.items {
             if magnet {
                 let dx = player[0] - it.pos[0];
@@ -892,13 +934,18 @@ impl Stage {
                 let dx = player[0] - it.pos[0];
                 let dy = player[1] - it.pos[1];
                 if dx * dx + dy * dy < 18.0 * 18.0 {
-                    collected.push(it.kind);
+                    collected.push((it.kind, it.pos));
                     it.kind = -100; // mark
                 }
             }
         }
         self.items.retain(|it| it.kind != -100 && it.pos[1] < FIELD_H + 16.0);
-        for kind in collected {
+        for (kind, pos) in collected {
+            let color = match kind {
+                1 => [0.5, 0.7, 1.0],       // point = blue
+                3 | 5 => [1.0, 0.6, 0.6],   // bomb/life = red
+                _ => [1.0, 0.4, 0.4],       // power = red
+            };
             match kind {
                 0 => self.world.power = (self.world.power + 1).min(128),
                 2 => self.world.power = (self.world.power + 8).min(128),
@@ -908,6 +955,7 @@ impl Stage {
                 5 => self.lives = (self.lives + 1).min(8),
                 _ => {}
             }
+            self.spawn_burst(pos, 4, 1.5, color, 6.0);
             self.events.push(Event::Sfx("item00"));
         }
     }
@@ -964,7 +1012,8 @@ impl Stage {
                         self.events.push(Event::Bgm("th06_03.wav"));
                     }
                 }
-                WorldEvent::EnemyDeath(_pos) => {
+                WorldEvent::EnemyDeath(pos) => {
+                    self.spawn_burst(pos, 10, 3.0, [1.0, 0.95, 0.7], 10.0);
                     self.events.push(Event::Sfx("enep00"));
                 }
                 WorldEvent::DropItem(pos, kind) => {
@@ -1069,6 +1118,19 @@ impl Stage {
                 c.tint = [1.0, 0.45, 0.45, 0.75];
                 cmds.push(c);
             }
+        }
+
+        // Death / pickup puffs (under bullets, additive-looking glow).
+        for p in &self.particles {
+            let a = (p.life / p.max_life).clamp(0.0, 1.0);
+            let s = p.size * (1.5 - a); // expand as it fades
+            cmds.push(DrawCmd {
+                tex: TEX_WHITE,
+                dst: [FIELD_X + p.pos[0] - s / 2.0, FIELD_Y + p.pos[1] - s / 2.0, s, s],
+                src: [0.25, 0.25, 0.75, 0.75],
+                tint: [p.color[0], p.color[1], p.color[2], a * 0.8],
+                rot: 0.0,
+            });
         }
 
         // Bullets from the original scripts.
