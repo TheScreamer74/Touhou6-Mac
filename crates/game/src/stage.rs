@@ -787,6 +787,9 @@ impl Stage {
             let across = (-dx * s + dy * c).abs();
             along >= l.start_offset && along <= l.end_offset && across < l.width / 4.0 + 2.0
         });
+        if (hit_bullet || hit_body || hit_laser) && std::env::var_os("TH06_GOD").is_some() {
+            return; // god mode for headless verification
+        }
         if hit_bullet || hit_body || hit_laser {
             self.lives -= 1;
             self.bombs = 3;

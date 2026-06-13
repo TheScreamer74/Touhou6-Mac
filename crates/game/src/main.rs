@@ -182,6 +182,8 @@ fn main() {
     let mut frames = 120u32;
     let mut scene_arg = String::from("title");
     let mut debug_lives: Option<i32> = None;
+    let mut demo: Option<String> = None;
+    let mut demo_interval = 300u32;
     let mut game_dir = String::from("../TH06 ~ The Embodiment of Scarlet Devil/kouma");
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -189,6 +191,8 @@ fn main() {
             "--frames" => frames = args.next().expect("--frames <n>").parse().expect("frame count"),
             "--scene" => scene_arg = args.next().expect("--scene <title|stage>"),
             "--lives" => debug_lives = Some(args.next().expect("--lives <n>").parse().expect("lives")),
+            "--demo" => demo = Some(args.next().expect("--demo <out_dir>")),
+            "--demo-interval" => demo_interval = args.next().expect("--demo-interval <n>").parse().expect("interval"),
             "--game-dir" => game_dir = args.next().expect("--game-dir <path>"),
             other => panic!("unknown argument: {other}"),
         }
@@ -286,7 +290,35 @@ fn main() {
         assets,
     };
 
-    if let Some(out) = screenshot {
+    if let Some(dir) = demo.clone() {
+        // Drive the full game from the title exactly as a player would:
+        // tap Start, then hold Shoot and drift upward, dumping a PNG every
+        // `demo_interval` frames so the real title->stage->boss path is
+        // visible headlessly.
+        std::fs::create_dir_all(&dir).expect("create demo dir");
+        let textures_ref: Vec<&th06_engine::Texture> = textures.iter().collect();
+        let mut frame = Frame { cmds: Vec::new(), bg: None, quit: false };
+        for f in 0..frames {
+            let input = if f == 3 {
+                Input::synthetic(&[], &[Key::Shoot]) // press Start
+            } else if f > 3 {
+                // Hold shoot; stay low (don't ram enemies) so god mode can
+                // carry the run to the boss for verification.
+                Input::synthetic(&[Key::Shoot], &[])
+            } else {
+                Input::default()
+            };
+            frame = game.update(&input);
+            if f % demo_interval == 0 {
+                let pixels = engine.render_to_image(&frame.cmds, &textures_ref, frame.bg.as_ref());
+                let path = format!("{dir}/frame_{f:05}.png");
+                image::save_buffer(&path, &pixels, th06_engine::SCREEN_W, th06_engine::SCREEN_H, image::ColorType::Rgba8)
+                    .expect("save demo frame");
+                println!("wrote {path}");
+            }
+        }
+        let _ = frame;
+    } else if let Some(out) = screenshot {
         // Headless: hold Shoot so stage scenes show combat.
         let input = Input::synthetic(&[Key::Shoot], &[]);
         let mut frame = game.update(&input);
