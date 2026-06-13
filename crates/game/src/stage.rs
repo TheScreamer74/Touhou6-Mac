@@ -46,6 +46,7 @@ pub enum Event {
     Bgm(&'static str),
     BackToTitle,
     Quit,
+    SaveScore(i64),
 }
 
 #[derive(Clone, Copy)]
@@ -196,6 +197,15 @@ fn reimu_a_rank(power: i32) -> usize {
     i
 }
 
+/// One Fantasy Seal bomb orb (ReimuA bomb): flies out, then homes onto the
+/// nearest enemy as a moving damage zone.
+struct BombOrb {
+    pos: [f32; 2],
+    vel: [f32; 2],
+    spd: f32,
+    hue: f32,
+}
+
 /// Falling collectible (ItemManager port, simplified physics).
 struct Item {
     pos: [f32; 2],
@@ -337,9 +347,12 @@ pub struct Stage {
     last_enemy_hit: Option<[f32; 2]>,
     state: PlayerState,
     shots: Vec<Shot>,
+    bomb_orbs: Vec<BombOrb>,
     items: Vec<Item>,
     particles: Vec<Particle>,
     score: i64,
+    hiscore: i64,
+    clear_bonus: i64,
     /// Running count for scoring power items collected at max power.
     power_item_count: usize,
     paused: bool,
@@ -407,9 +420,12 @@ impl Stage {
             last_enemy_hit: None,
             state: PlayerState::Alive,
             shots: Vec::new(),
+            bomb_orbs: Vec::new(),
             items: Vec::new(),
             particles: Vec::new(),
             score: 0,
+            hiscore: 0,
+            clear_bonus: 0,
             power_item_count: 0,
             paused: false,
             pause_cursor: 0,
@@ -430,6 +446,10 @@ impl Stage {
 
     pub fn set_lives(&mut self, lives: i32) {
         self.lives = lives;
+    }
+
+    pub fn set_hiscore(&mut self, hiscore: i64) {
+        self.hiscore = hiscore;
     }
 
     pub fn background_scene(&self) -> Option<BgScene> {
@@ -516,7 +536,15 @@ impl Stage {
             && self.enemies.is_empty()
             && !self.world.boss_present
         {
-            self.state = PlayerState::Cleared(300);
+            // Clear bonus + persist the score (capped graze/lives bonus).
+            let bonus = self.lives.max(0) as i64 * 1_000_000 + self.bombs.max(0) as i64 * 300_000;
+            self.score += bonus;
+            self.clear_bonus = bonus;
+            if self.score > self.hiscore {
+                self.hiscore = self.score;
+            }
+            self.events.push(Event::SaveScore(self.hiscore));
+            self.state = PlayerState::Cleared(420);
         }
 
         self.draw()
@@ -800,26 +828,89 @@ impl Stage {
         }
 
         if self.bombing > 0 {
-            self.bombing -= 1;
-            self.world.bullets.clear();
-            for e in &mut self.enemies {
-                if e.occupied && e.interactable && e.damageable {
-                    e.life -= 4;
-                }
-            }
+            self.update_bomb();
         } else if can_act && input.pressed(Key::Bomb) && self.bombs > 0 {
-            self.dying = 0; // a bomb in the deathbomb window cancels the death
-            self.bombs -= 1;
-            self.bombing = 120;
-            self.invuln = self.invuln.max(180);
-            self.spell_capturing = false; // bombing forfeits the capture
-            self.events.push(Event::Sfx("power1"));
+            self.fire_bomb();
         } else if self.dying > 0 {
             // No bomb this frame: tick the deathbomb window, commit on expiry.
             self.dying -= 1;
             if self.dying == 0 {
                 self.commit_death();
             }
+        }
+    }
+
+    /// Fantasy Seal (ReimuA bomb): 8 orbs fly out from the player, 360-frame
+    /// invulnerability, ~300-frame duration.
+    fn fire_bomb(&mut self) {
+        self.dying = 0; // a bomb in the deathbomb window cancels the death
+        self.bombs -= 1;
+        self.bombing = 300;
+        self.invuln = self.invuln.max(360);
+        self.spell_capturing = false; // bombing forfeits the capture
+        self.world.bullets.clear();
+        self.cancel_lasers();
+        self.bomb_orbs.clear();
+        for i in 0..8 {
+            let a = i as f32 / 8.0 * std::f32::consts::TAU + 0.39;
+            self.bomb_orbs.push(BombOrb {
+                pos: self.pos,
+                vel: [a.cos() * 4.0, a.sin() * 4.0],
+                spd: 4.0,
+                hue: i as f32 / 8.0,
+            });
+        }
+        self.spawn_burst(self.pos, 24, 6.0, [0.6, 0.8, 1.0], 16.0);
+        self.events.push(Event::Sfx("power1"));
+    }
+
+    /// Per-frame bomb update: clears bullets, homes the orbs onto the nearest
+    /// enemy, and damages enemies inside each orb's region (8/frame).
+    fn update_bomb(&mut self) {
+        self.bombing -= 1;
+        self.world.bullets.clear();
+        // Pick the nearest enemy as the shared homing pivot.
+        let pivot = self
+            .enemies
+            .iter()
+            .filter(|e| e.occupied && e.interactable)
+            .min_by(|a, b| {
+                let da = (a.pos[0] - self.pos[0]).hypot(a.pos[1] - self.pos[1]);
+                let db = (b.pos[0] - self.pos[0]).hypot(b.pos[1] - self.pos[1]);
+                da.total_cmp(&db)
+            })
+            .map(|e| [e.pos[0], e.pos[1]]);
+        for o in &mut self.bomb_orbs {
+            if let Some(t) = pivot {
+                // BombData.cpp homing: steer toward the pivot, speed capped 10.
+                let mut vx = t[0] - o.pos[0];
+                let mut vy = t[1] - o.pos[1];
+                let mut len = (vx * vx + vy * vy).sqrt() / (o.spd / 8.0).max(0.01);
+                if len < 1.0 {
+                    len = 1.0;
+                }
+                vx = vx / len + o.vel[0];
+                vy = vy / len + o.vel[1];
+                len = (vx * vx + vy * vy).sqrt().max(0.01);
+                o.spd = len.min(10.0).max(1.0);
+                o.vel = [vx * o.spd / len, vy * o.spd / len];
+            }
+            o.pos[0] += o.vel[0];
+            o.pos[1] += o.vel[1];
+        }
+        // Each orb is a 48px damage region dealing 8/frame.
+        for e in &mut self.enemies {
+            if !e.occupied || !e.interactable || !e.damageable {
+                continue;
+            }
+            for o in &self.bomb_orbs {
+                if (e.pos[0] - o.pos[0]).abs() < 24.0 && (e.pos[1] - o.pos[1]).abs() < 24.0 {
+                    e.life -= 8;
+                }
+            }
+        }
+        if self.bombing == 0 {
+            self.bomb_orbs.clear();
         }
     }
 
@@ -1183,6 +1274,13 @@ impl Stage {
         // Dialogue clears the field of bullets in practice.
         self.world.bullets.clear();
         self.cancel_lasers();
+        // The boss theme starts at the pre-boss confrontation. Stage 1's MSG
+        // has no MUSIC instruction, so the first dialogue is the cue (the
+        // midboss has no dialogue, so it keeps the stage theme).
+        if !self.boss_bgm_started {
+            self.boss_bgm_started = true;
+            self.events.push(Event::Bgm("th06_03.wav"));
+        }
     }
 
     /// Port of GuiImpl::RunMsg (text/wait/music subset).
@@ -1414,11 +1512,10 @@ impl Stage {
                     self.world.bullets.clear();
                     self.cancel_lasers();
                 }
-                WorldEvent::BossSet(present) => {
-                    if present && !self.boss_bgm_started {
-                        self.boss_bgm_started = true;
-                        self.events.push(Event::Bgm("th06_03.wav"));
-                    }
+                WorldEvent::BossSet(_present) => {
+                    // Boss music is driven by the pre-boss dialogue, not here:
+                    // BossSet also fires for the midboss, which keeps the stage
+                    // theme.
                 }
                 WorldEvent::EnemyDeath(pos) => {
                     self.spawn_burst(pos, 10, 3.0, [1.0, 0.95, 0.7], 10.0);
@@ -1448,24 +1545,26 @@ impl Stage {
             ));
         }
 
-        // Spellcard aura: a pulsing, spinning glow behind the boss.
+        // Spellcard aura: soft pulsing glows behind the boss (BOMB_GLOW is a
+        // round radial sprite, so this reads as an aura rather than squares).
         if self.spell_active {
             if let Some(boss) = self.enemies.iter().find(|e| e.is_boss && e.occupied) {
+                let [gx, gy, gw, gh] = BOMB_GLOW.rect;
                 let t = self.anim as f32;
-                for i in 0..3 {
-                    let s = 150.0 + i as f32 * 60.0 + (t * 0.06 + i as f32).sin() * 18.0;
-                    let a = (0.18 - i as f32 * 0.04) * (0.7 + 0.3 * (t * 0.05).sin());
+                for i in 0..4 {
+                    let s = 120.0 + i as f32 * 55.0 + (t * 0.06 + i as f32).sin() * 16.0;
+                    let a = (0.22 - i as f32 * 0.045) * (0.7 + 0.3 * (t * 0.05).sin());
                     cmds.push(DrawCmd {
-                        tex: TEX_WHITE,
+                        tex: TEX_PLAYER,
                         dst: [
                             FIELD_X + boss.pos[0] - s / 2.0,
                             FIELD_Y + boss.pos[1] - s / 2.0,
                             s,
                             s,
                         ],
-                        src: [0.25, 0.25, 0.75, 0.75],
-                        tint: [0.9, 0.3, 0.5, a.max(0.0)],
-                        rot: t * 0.02 * (i as f32 + 1.0),
+                        src: [gx / 256.0, gy / 256.0, (gx + gw) / 256.0, (gy + gh) / 256.0],
+                        tint: [0.95, 0.35, 0.6, a.max(0.0)],
+                        rot: t * 0.015 * (i as f32 + 1.0),
                     });
                 }
             }
@@ -1580,17 +1679,18 @@ impl Stage {
             }
         }
 
-        // Bomb orbs.
-        if self.bombing > 0 {
-            let t = (120 - self.bombing) as f32;
-            for i in 0..6 {
-                let a = t * 0.08 + i as f32 / 6.0 * std::f32::consts::TAU;
-                let r = 30.0 + t * 1.8;
-                let pos = [self.pos[0] + a.cos() * r, self.pos[1] + a.sin() * r];
-                let mut c = sprite_at(BOMB_GLOW, pos, 0.8);
-                c.tint = [1.0, 0.45, 0.45, 0.75];
-                cmds.push(c);
-            }
+        // Fantasy Seal bomb orbs: spinning rainbow glows tracking enemies.
+        for o in &self.bomb_orbs {
+            let h = o.hue * std::f32::consts::TAU;
+            let col = [
+                0.55 + 0.45 * h.cos(),
+                0.55 + 0.45 * (h + 2.094).cos(),
+                0.55 + 0.45 * (h + 4.188).cos(),
+            ];
+            let mut glow = sprite_at(BOMB_GLOW, o.pos, 0.85);
+            glow.tint = [col[0], col[1], col[2], 0.85];
+            glow.rot = self.anim as f32 * 0.2 + o.hue * 6.28;
+            cmds.push(glow);
         }
 
         // Death / pickup puffs (under bullets, additive-looking glow).
@@ -1786,6 +1886,7 @@ impl Stage {
             cmds.push(hud_sprite(HUD_STAR_GREEN, [sx + 40.0 + i as f32 * 18.0, 144.0]));
         }
         // Score and power readouts.
+        draw_text(cmds, [sx, 68.0], 16.0, [1.0, 0.9, 0.5, 1.0], &format!("Hi {}", self.hiscore.max(self.score)));
         draw_text(cmds, [sx, 84.0], 16.0, [1.0, 1.0, 1.0, 1.0], &format!("Score {}", self.score));
         draw_text(cmds, [sx, 172.0], 16.0, [1.0, 0.8, 0.4, 1.0], &format!("Power {:3}", self.world.power));
         draw_text(cmds, [sx, 190.0], 16.0, [0.8, 0.9, 1.0, 1.0], &format!("Graze {}", self.graze));
@@ -1799,7 +1900,22 @@ impl Stage {
                 cmds.push(rect([FIELD_X, FIELD_Y, FIELD_W, FIELD_H], [0.0, 0.0, 0.0, 0.6]));
             }
             PlayerState::Cleared(_) => {
-                cmds.push(rect([FIELD_X, FIELD_Y, FIELD_W, FIELD_H], [1.0, 1.0, 1.0, 0.12]));
+                cmds.push(rect([FIELD_X, FIELD_Y, FIELD_W, FIELD_H], [0.0, 0.0, 0.08, 0.72]));
+                let cx = FIELD_X + 40.0;
+                let mut y = FIELD_Y + 90.0;
+                draw_text(cmds, [FIELD_X + FIELD_W / 2.0 - 80.0, FIELD_Y + 50.0], 22.0, [1.0, 1.0, 0.5, 1.0], "STAGE 1 CLEAR");
+                let rows = [
+                    ("Graze".to_string(), self.graze.to_string()),
+                    ("Spell".to_string(), if self.spell_captured { "Captured".into() } else { "-".into() }),
+                    ("Clear bonus".to_string(), self.clear_bonus.to_string()),
+                    ("Score".to_string(), self.score.to_string()),
+                    ("Hi-Score".to_string(), self.hiscore.to_string()),
+                ];
+                for (label, val) in rows {
+                    draw_text(cmds, [cx, y], 16.0, [0.8, 0.85, 1.0, 1.0], &label);
+                    draw_text(cmds, [cx + 130.0, y], 16.0, [1.0, 1.0, 1.0, 1.0], &val);
+                    y += 30.0;
+                }
             }
             _ => {}
         }

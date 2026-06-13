@@ -99,6 +99,13 @@ struct Game {
     audio: Option<Audio>,
     bgm_dir: PathBuf,
     assets: StageAssets,
+    hiscore: i64,
+    hiscore_path: PathBuf,
+}
+
+/// Read the persisted high score (0 if absent/unparseable).
+fn load_hiscore(path: &Path) -> i64 {
+    std::fs::read_to_string(path).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
 }
 
 const SFX_NAMES: [&str; 13] = [
@@ -135,7 +142,9 @@ impl Game {
                 let (cmds, action) = self.title.update(input);
                 match action {
                     TitleAction::StartGame => {
-                        self.scene = Scene::Stage(Box::new(self.assets.new_stage()));
+                        let mut stage = self.assets.new_stage();
+                        stage.set_hiscore(self.hiscore);
+                        self.scene = Scene::Stage(Box::new(stage));
                         if let Some(a) = &self.audio {
                             a.play_sfx("plst00");
                         }
@@ -163,6 +172,12 @@ impl Game {
                         }
                         Event::BackToTitle => back = true,
                         Event::Quit => return Frame { cmds, bg, quit: true },
+                        Event::SaveScore(score) => {
+                            if score > self.hiscore {
+                                self.hiscore = score;
+                                let _ = std::fs::write(&self.hiscore_path, score.to_string());
+                            }
+                        }
                     }
                 }
                 if back {
@@ -276,10 +291,13 @@ fn main() {
         bg_tex_slot,
     };
 
+    let hiscore_path = game_dir.join("th06_hiscore.txt");
+    let hiscore = load_hiscore(&hiscore_path);
     let mut game = Game {
         scene: match scene_arg.as_str() {
             "stage" => {
                 let mut s = assets.new_stage();
+                s.set_hiscore(hiscore);
                 if let Some(l) = debug_lives {
                     s.set_lives(l);
                 }
@@ -291,6 +309,8 @@ fn main() {
         audio: if screenshot.is_some() { None } else { audio },
         bgm_dir: game_dir.join("bgm"),
         assets,
+        hiscore,
+        hiscore_path,
     };
 
     if let Some(dir) = demo.clone() {
