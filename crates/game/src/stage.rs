@@ -60,6 +60,8 @@ const fn spr(tex: usize, x: f32, y: f32, w: f32, h: f32) -> SpriteRef {
 }
 
 const AMULET: SpriteRef = spr(TEX_PLAYER, 129.0, 1.0, 14.0, 14.0);
+/// player00 sprite 68: the tall thin needle (Reimu B).
+const NEEDLE: SpriteRef = spr(TEX_PLAYER, 193.0, 1.0, 14.0, 46.0);
 const BOMB_GLOW: SpriteRef = spr(TEX_PLAYER, 1.0, 97.0, 62.0, 62.0);
 /// player00 sprite 66: the focus hitbox marker.
 const HITBOX_MARKER: SpriteRef = spr(TEX_PLAYER, 160.0, 0.0, 16.0, 16.0);
@@ -77,6 +79,8 @@ struct Shot {
     /// BULLET_TYPE_*: 0 straight, 1 homing orb (Reimu A), 2 gravity orb-missile
     /// (Marisa A), 3 laser (handled separately).
     bt: u8,
+    /// Sprite look: 0 amulet, 1 needle, 2 missile.
+    look: u8,
     age: u32,
     /// Current speed magnitude (Player.cpp `unk_134.y`), grown while homing.
     spd: f32,
@@ -415,6 +419,15 @@ impl Character {
         }
     }
 
+    /// Sprite look for a shot of bullet type `bt`: 0 amulet, 1 needle, 2 missile.
+    fn shot_look(self, bt: u8) -> u8 {
+        match self {
+            Character::ReimuB => 1,                         // piercing-looking needles
+            Character::MarisaA if bt == 2 => 2,             // orb missiles
+            _ => 0,                                         // amulets
+        }
+    }
+
     /// Per-frame damage of each MarisaB orb laser at the given power (0 = no
     /// beams). Beams appear from rank 2 (power >= 8).
     fn marisa_beam_dmg(self, power: i32) -> i32 {
@@ -570,8 +583,8 @@ pub struct Stage {
     player_tex: usize,
     /// Per-frame damage of each MarisaB orb beam this frame (0 = no beams).
     beam_dmg: i32,
-    /// True while a Marisa bomb (Master Spark) is firing.
-    master_spark: bool,
+    /// Active bomb kind: 0 Fantasy Seal, 1 Dream cross, 2 Stardust, 3 Master Spark.
+    bomb_kind: u8,
     /// player00.anm: sprites + scripts, for the banking/idle animation.
     player_sprites: HashMap<u32, Sprite>,
     player_scripts: HashMap<i32, Vec<AnmInstr>>,
@@ -655,7 +668,7 @@ impl Stage {
             character,
             player_tex,
             beam_dmg: 0,
-            master_spark: false,
+            bomb_kind: 0,
             player_sprites: player.sprites.iter().map(|s| (s.index, s.clone())).collect(),
             player_tex_size: [player.width as f32, player.height as f32],
             player_runner: AnmRunner::new(idle),
@@ -1102,8 +1115,7 @@ impl Stage {
         }
     }
 
-    /// Bomb: Reimu = Fantasy Seal (8 homing orbs); Marisa = Master Spark (a
-    /// huge vertical beam). 360-frame invulnerability.
+    /// Bomb, one per shot type (BombData.cpp). 360-frame invulnerability.
     fn fire_bomb(&mut self) {
         self.dying = 0; // a bomb in the deathbomb window cancels the death
         self.bombs -= 1;
@@ -1112,21 +1124,31 @@ impl Stage {
         self.world.bullets.clear();
         self.cancel_lasers();
         self.bomb_orbs.clear();
-        if self.character.is_marisa() {
-            self.master_spark = true;
-            self.bombing = 240;
-        } else {
-            self.master_spark = false;
-            self.bombing = 300;
-            for i in 0..8 {
-                let a = i as f32 / 8.0 * std::f32::consts::TAU + 0.39;
-                self.bomb_orbs.push(BombOrb {
-                    pos: self.pos,
-                    vel: [a.cos() * 4.0, a.sin() * 4.0],
-                    spd: 4.0,
-                    hue: i as f32 / 8.0,
-                });
+        self.bomb_kind = match self.character {
+            Character::ReimuA => 0,
+            Character::ReimuB => 1,
+            Character::MarisaA => 2,
+            Character::MarisaB => 3,
+        };
+        match self.bomb_kind {
+            0 => {
+                // Fantasy Seal: 8 homing orbs.
+                self.bombing = 300;
+                for i in 0..8 {
+                    let a = i as f32 / 8.0 * std::f32::consts::TAU + 0.39;
+                    self.bomb_orbs.push(BombOrb { pos: self.pos, vel: [a.cos() * 4.0, a.sin() * 4.0], spd: 4.0, hue: i as f32 / 8.0 });
+                }
             }
+            1 => self.bombing = 140, // Dream cross: beams, no orbs
+            2 => {
+                // Stardust: a ring of stars drifting outward (no homing).
+                self.bombing = 250;
+                for i in 0..16 {
+                    let a = i as f32 / 16.0 * std::f32::consts::TAU;
+                    self.bomb_orbs.push(BombOrb { pos: self.pos, vel: [a.cos() * 3.0, a.sin() * 3.0], spd: 3.0, hue: i as f32 / 16.0 });
+                }
+            }
+            _ => self.bombing = 300, // Master Spark
         }
         self.spawn_burst(self.pos, 24, 6.0, [0.6, 0.8, 1.0], 16.0);
         self.events.push(Event::Sfx("power1"));
@@ -1136,19 +1158,33 @@ impl Stage {
     fn update_bomb(&mut self) {
         self.bombing -= 1;
         self.world.bullets.clear();
-        if self.master_spark {
-            // Wide central beam melts everything above the player.
-            let px = self.pos[0];
-            for e in &mut self.enemies {
-                if e.occupied && e.interactable && e.damageable && (e.pos[0] - px).abs() < 70.0 && e.pos[1] <= self.pos[1] {
-                    e.life -= 25;
+        match self.bomb_kind {
+            1 => {
+                // Dream cross: a vertical beam at the player's x and a
+                // horizontal beam at the player's y melt anything they touch.
+                let (px, py) = (self.pos[0], self.pos[1]);
+                for e in &mut self.enemies {
+                    if e.occupied && e.interactable && e.damageable
+                        && ((e.pos[0] - px).abs() < 40.0 || (e.pos[1] - py).abs() < 40.0)
+                    {
+                        e.life -= 12;
+                    }
                 }
+                return;
             }
-            if self.bombing == 0 {
-                self.master_spark = false;
+            3 => {
+                // Master Spark: a screen-wide beam above the player.
+                let px = self.pos[0];
+                for e in &mut self.enemies {
+                    if e.occupied && e.interactable && e.damageable && (e.pos[0] - px).abs() < 120.0 && e.pos[1] <= self.pos[1] {
+                        e.life -= 25;
+                    }
+                }
+                return;
             }
-            return;
+            _ => {}
         }
+        let stardust = self.bomb_kind == 2;
         // Pick the nearest enemy as the shared homing pivot.
         let pivot = self
             .enemies
@@ -1161,8 +1197,8 @@ impl Stage {
             })
             .map(|e| [e.pos[0], e.pos[1]]);
         for o in &mut self.bomb_orbs {
-            if let Some(t) = pivot {
-                // BombData.cpp homing: steer toward the pivot, speed capped 10.
+            // Fantasy Seal orbs home; Stardust stars drift straight outward.
+            if let (false, Some(t)) = (stardust, pivot) {
                 let mut vx = t[0] - o.pos[0];
                 let mut vy = t[1] - o.pos[1];
                 let mut len = (vx * vx + vy * vy).sqrt() / (o.spd / 8.0).max(0.01);
@@ -1178,13 +1214,14 @@ impl Stage {
             o.pos[0] += o.vel[0];
             o.pos[1] += o.vel[1];
         }
-        // Each orb is a 48px damage region dealing 8/frame.
+        // Each orb is a damage region (Stardust's stars are larger, 64px).
+        let r = if stardust { 32.0 } else { 24.0 };
         for e in &mut self.enemies {
             if !e.occupied || !e.interactable || !e.damageable {
                 continue;
             }
             for o in &self.bomb_orbs {
-                if (e.pos[0] - o.pos[0]).abs() < 24.0 && (e.pos[1] - o.pos[1]).abs() < 24.0 {
+                if (e.pos[0] - o.pos[0]).abs() < r && (e.pos[1] - o.pos[1]).abs() < r {
                     e.life -= 8;
                 }
             }
@@ -1252,6 +1289,7 @@ impl Stage {
                 vel: [a.cos() * def.vel, a.sin() * def.vel],
                 damage: def.damage,
                 bt: def.bt,
+                look: self.character.shot_look(def.bt),
                 age: 0,
                 spd: def.vel,
             });
@@ -1929,9 +1967,24 @@ impl Stage {
             });
         }
 
-        // Player shots (ReimuA fires amulets, both main and orb).
+        // Player shots: amulet / needle / missile per character.
         for s in &self.shots {
-            cmds.push(sprite_at(AMULET, s.pos, 0.85));
+            match s.look {
+                1 => {
+                    // Needle, oriented along its travel direction.
+                    let mut n = sprite_at(NEEDLE, s.pos, 0.95);
+                    n.tint = [1.0, 0.5, 0.6, 0.95];
+                    n.rot = s.vel[1].atan2(s.vel[0]) + std::f32::consts::FRAC_PI_2;
+                    cmds.push(n);
+                }
+                2 => {
+                    // Orb missile (gold).
+                    let mut m = sprite_at(AMULET, s.pos, 0.95);
+                    m.tint = [1.0, 0.85, 0.3, 0.95];
+                    cmds.push(m);
+                }
+                _ => cmds.push(sprite_at(AMULET, s.pos, 0.85)),
+            }
         }
 
         // MarisaB orb beams behind the player.
@@ -1992,9 +2045,9 @@ impl Stage {
         }
 
         // Master Spark: a wide flickering vertical beam from the player up.
-        if self.master_spark && self.bombing > 0 {
+        if self.bomb_kind == 3 && self.bombing > 0 {
             let flick = 0.75 + 0.25 * (self.anim as f32 * 0.8).sin();
-            for (w, col) in [(140.0, [0.9, 0.7, 1.0, 0.45]), (90.0, [1.0, 0.9, 1.0, 0.7]), (40.0, [1.0, 1.0, 1.0, 0.95])] {
+            for (w, col) in [(240.0, [0.9, 0.7, 1.0, 0.4]), (150.0, [1.0, 0.9, 1.0, 0.65]), (70.0, [1.0, 1.0, 1.0, 0.95])] {
                 cmds.push(DrawCmd {
                     tex: TEX_WHITE,
                     dst: [FIELD_X + self.pos[0] - w / 2.0, FIELD_Y, w, self.pos[1]],
@@ -2003,6 +2056,24 @@ impl Stage {
                     rot: 0.0,
                 });
             }
+        }
+        // Dream cross: a vertical + horizontal beam through the player.
+        if self.bomb_kind == 1 && self.bombing > 0 {
+            let a = 0.5 + 0.3 * (self.anim as f32 * 0.6).sin();
+            cmds.push(DrawCmd {
+                tex: TEX_WHITE,
+                dst: [FIELD_X + self.pos[0] - 40.0, FIELD_Y, 80.0, FIELD_H],
+                src: [0.25, 0.25, 0.75, 0.75],
+                tint: [1.0, 0.6, 0.7, a],
+                rot: 0.0,
+            });
+            cmds.push(DrawCmd {
+                tex: TEX_WHITE,
+                dst: [FIELD_X, FIELD_Y + self.pos[1] - 40.0, FIELD_W, 80.0],
+                src: [0.25, 0.25, 0.75, 0.75],
+                tint: [1.0, 0.6, 0.7, a],
+                rot: 0.0,
+            });
         }
 
         // Fantasy Seal bomb orbs: spinning rainbow glows tracking enemies.
