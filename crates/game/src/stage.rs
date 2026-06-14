@@ -277,6 +277,113 @@ const REIMU_B_RANKS: [&[ShotDef]; 9] = [
     ],
 ];
 
+/// MarisaA shot tiers: a fast front shot (motion.y -8) plus type-2 orb
+/// "missiles" (low speed, gravity-accelerated) fired from the orbs.
+const MARISA_A_RANKS: [&[ShotDef]; 9] = [
+    &[sb(5, 0, 0.0, -8.0, -90.0, 12.0, 48, 0, 0)],
+    &[
+        sb(5, 0, 0.0, -8.0, -90.0, 12.0, 36, 0, 0),
+        sb(30, 0, 0.0, 0.0, -90.0, 3.0, 18, 1, 2),
+        sb(30, 0, 0.0, 0.0, -90.0, 3.0, 18, 2, 2),
+    ],
+    &[
+        sb(5, 0, 0.0, -8.0, -90.0, 12.0, 32, 0, 0),
+        sb(30, 0, 0.0, 0.0, -95.0, 3.0, 16, 1, 2),
+        sb(30, 0, 0.0, 0.0, -85.0, 3.0, 16, 2, 2),
+        sb(30, 15, 0.0, 0.0, -85.0, 3.0, 10, 1, 2),
+        sb(30, 15, 0.0, 0.0, -95.0, 3.0, 10, 2, 2),
+    ],
+    &[
+        sb(5, 0, 0.0, -8.0, -90.0, 12.0, 32, 0, 0),
+        sb(15, 0, 0.0, 0.0, -95.0, 3.0, 15, 1, 2),
+        sb(15, 0, 0.0, 0.0, -85.0, 3.0, 15, 2, 2),
+        sb(15, 15, 0.0, 0.0, -85.0, 3.0, 10, 1, 2),
+        sb(15, 15, 0.0, 0.0, -95.0, 3.0, 10, 2, 2),
+    ],
+    &[
+        sb(5, 0, 0.0, -8.0, -90.0, 12.0, 32, 0, 0),
+        sb(15, 0, 0.0, 0.0, -95.0, 3.0, 16, 1, 2),
+        sb(15, 0, 0.0, 0.0, -85.0, 3.0, 16, 2, 2),
+        sb(15, 20, 0.0, 0.0, -85.0, 3.0, 11, 1, 2),
+        sb(15, 20, 0.0, 0.0, -95.0, 3.0, 11, 2, 2),
+    ],
+    &[
+        sb(5, 0, -8.0, -8.0, -90.0, 12.0, 16, 0, 0),
+        sb(5, 0, 8.0, -8.0, -90.0, 12.0, 16, 0, 0),
+        sb(10, 0, 0.0, 0.0, -95.0, 3.0, 16, 1, 2),
+        sb(10, 0, 0.0, 0.0, -85.0, 3.0, 16, 2, 2),
+        sb(15, 5, 0.0, 0.0, -85.0, 3.0, 10, 1, 2),
+        sb(15, 5, 0.0, 0.0, -95.0, 3.0, 10, 2, 2),
+    ],
+    &[
+        sb(5, 0, -8.0, -8.0, -90.0, 12.0, 13, 0, 0),
+        sb(5, 0, 8.0, -8.0, -90.0, 12.0, 13, 0, 0),
+        sb(10, 0, 0.0, 0.0, -98.0, 3.0, 16, 1, 2),
+        sb(10, 0, 0.0, 0.0, -82.0, 3.0, 16, 2, 2),
+        sb(10, 5, 0.0, 0.0, -82.0, 3.0, 10, 1, 2),
+        sb(10, 5, 0.0, 0.0, -98.0, 3.0, 10, 2, 2),
+    ],
+    &[
+        sb(5, 0, 0.0, 0.0, -94.0, 12.0, 8, 0, 0),
+        sb(5, 0, 0.0, 0.0, -90.0, 12.0, 12, 0, 0),
+        sb(5, 0, 0.0, 0.0, -86.0, 12.0, 8, 0, 0),
+        sb(10, 0, 0.0, 0.0, -98.0, 3.0, 15, 1, 2),
+        sb(10, 0, 0.0, 0.0, -82.0, 3.0, 15, 2, 2),
+        sb(10, 5, 0.0, 0.0, -82.0, 3.0, 10, 1, 2),
+        sb(10, 5, 0.0, 0.0, -98.0, 3.0, 10, 2, 2),
+        sb(15, 0, 0.0, 0.0, -78.0, 3.0, 9, 1, 2),
+        sb(15, 0, 0.0, 0.0, -102.0, 3.0, 9, 2, 2),
+    ],
+    &[
+        sb(5, 0, 0.0, 0.0, -94.0, 12.0, 8, 0, 0),
+        sb(5, 0, 0.0, 0.0, -90.0, 12.0, 12, 0, 0),
+        sb(5, 0, 0.0, 0.0, -86.0, 12.0, 8, 0, 0),
+        sb(10, 0, 0.0, 0.0, -98.0, 3.0, 14, 1, 2),
+        sb(10, 0, 0.0, 0.0, -82.0, 3.0, 14, 2, 2),
+        sb(10, 5, 0.0, 0.0, -82.0, 3.0, 10, 1, 2),
+        sb(10, 5, 0.0, 0.0, -98.0, 3.0, 10, 2, 2),
+        sb(10, 0, 0.0, 0.0, -75.0, 3.0, 10, 1, 2),
+        sb(10, 0, 0.0, 0.0, -105.0, 3.0, 10, 2, 2),
+    ],
+];
+
+/// MarisaB front shots (the orb LASERS are handled separately as vertical
+/// beams; see `marisa_beam_dmg`).
+const MARISA_B_RANKS: [&[ShotDef]; 9] = [
+    &[sb(5, 0, 0.0, -8.0, -90.0, 12.0, 48, 0, 0)],
+    &[sb(5, 0, 0.0, -8.0, -90.0, 12.0, 32, 0, 0)],
+    &[sb(5, 0, 0.0, -8.0, -90.0, 12.0, 32, 0, 0)],
+    &[
+        sb(5, 0, -8.0, -8.0, -92.0, 12.0, 22, 0, 0),
+        sb(5, 0, 8.0, -8.0, -88.0, 12.0, 22, 0, 0),
+    ],
+    &[
+        sb(5, 0, -8.0, -8.0, -92.0, 12.0, 22, 0, 0),
+        sb(5, 0, 8.0, -8.0, -88.0, 12.0, 22, 0, 0),
+    ],
+    &[
+        sb(5, 0, -8.0, -8.0, -92.0, 12.0, 20, 0, 0),
+        sb(5, 0, 8.0, -8.0, -88.0, 12.0, 20, 0, 0),
+    ],
+    &[
+        sb(5, 0, 0.0, 0.0, -95.0, 12.0, 15, 0, 0),
+        sb(5, 0, 0.0, 0.0, -90.0, 12.0, 20, 0, 0),
+        sb(5, 0, 0.0, 0.0, -85.0, 12.0, 15, 0, 0),
+    ],
+    &[
+        sb(5, 0, 0.0, 0.0, -95.0, 12.0, 15, 0, 0),
+        sb(5, 0, 0.0, 0.0, -90.0, 12.0, 20, 0, 0),
+        sb(5, 0, 0.0, 0.0, -85.0, 12.0, 15, 0, 0),
+    ],
+    &[
+        sb(5, 0, 0.0, 0.0, -100.0, 12.0, 12, 0, 0),
+        sb(5, 0, 0.0, 0.0, -95.0, 12.0, 15, 0, 0),
+        sb(5, 0, 0.0, 0.0, -90.0, 12.0, 20, 0, 0),
+        sb(5, 0, 0.0, 0.0, -85.0, 12.0, 15, 0, 0),
+        sb(5, 0, 0.0, 0.0, -80.0, 12.0, 12, 0, 0),
+    ],
+];
+
 /// Player character + shot type.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Character {
@@ -301,9 +408,24 @@ impl Character {
     }
     fn ranks(self) -> &'static [&'static [ShotDef]; 9] {
         match self {
-            // Marisa tables land in later phases; fall back to Reimu for now.
-            Character::ReimuA | Character::MarisaA => &REIMU_A_RANKS,
-            Character::ReimuB | Character::MarisaB => &REIMU_B_RANKS,
+            Character::ReimuA => &REIMU_A_RANKS,
+            Character::ReimuB => &REIMU_B_RANKS,
+            Character::MarisaA => &MARISA_A_RANKS,
+            Character::MarisaB => &MARISA_B_RANKS,
+        }
+    }
+
+    /// Per-frame damage of each MarisaB orb laser at the given power (0 = no
+    /// beams). Beams appear from rank 2 (power >= 8).
+    fn marisa_beam_dmg(self, power: i32) -> i32 {
+        if self != Character::MarisaB || power < 8 {
+            return 0;
+        }
+        match power_rank(power) {
+            0..=4 => 3,
+            5..=6 => 4,
+            7 => 5,
+            _ => 6,
         }
     }
 }
@@ -444,6 +566,12 @@ pub struct Stage {
     bullet_tex_size: [f32; 2],
     // player
     character: Character,
+    /// Texture slot for the player body sprite (player00 Reimu / player01 Marisa).
+    player_tex: usize,
+    /// Per-frame damage of each MarisaB orb beam this frame (0 = no beams).
+    beam_dmg: i32,
+    /// True while a Marisa bomb (Master Spark) is firing.
+    master_spark: bool,
     /// player00.anm: sprites + scripts, for the banking/idle animation.
     player_sprites: HashMap<u32, Sprite>,
     player_scripts: HashMap<i32, Vec<AnmInstr>>,
@@ -495,7 +623,7 @@ pub struct Stage {
 }
 
 impl Stage {
-    pub fn new(ecl: Ecl, enemy_scripts: HashMap<i32, ScriptRef>, etama: &Entry, player: &Entry, character: Character, msg: Msg, background: Option<Background>) -> Self {
+    pub fn new(ecl: Ecl, enemy_scripts: HashMap<i32, ScriptRef>, etama: &Entry, player: &Entry, player_tex: usize, character: Character, msg: Msg, background: Option<Background>) -> Self {
         let timeline_off = ecl.timeline_offset;
         let player_scripts: HashMap<i32, Vec<AnmInstr>> =
             player.scripts.iter().map(|(id, instrs)| (*id as i32, instrs.clone())).collect();
@@ -525,6 +653,9 @@ impl Stage {
             bullet_sprites: etama.sprites.iter().map(|s| (s.index, s.clone())).collect(),
             bullet_tex_size: [etama.width as f32, etama.height as f32],
             character,
+            player_tex,
+            beam_dmg: 0,
+            master_spark: false,
             player_sprites: player.sprites.iter().map(|s| (s.index, s.clone())).collect(),
             player_tex_size: [player.width as f32, player.height as f32],
             player_runner: AnmRunner::new(idle),
@@ -951,6 +1082,13 @@ impl Stage {
             self.fire_timer = -1;
         }
 
+        // MarisaB orb beams: two vertical lasers while shooting at power >= 8.
+        self.beam_dmg = if can_act && input.held(Key::Shoot) {
+            self.character.marisa_beam_dmg(self.world.power)
+        } else {
+            0
+        };
+
         if self.bombing > 0 {
             self.update_bomb();
         } else if can_act && input.pressed(Key::Bomb) && self.bombs > 0 {
@@ -964,35 +1102,53 @@ impl Stage {
         }
     }
 
-    /// Fantasy Seal (ReimuA bomb): 8 orbs fly out from the player, 360-frame
-    /// invulnerability, ~300-frame duration.
+    /// Bomb: Reimu = Fantasy Seal (8 homing orbs); Marisa = Master Spark (a
+    /// huge vertical beam). 360-frame invulnerability.
     fn fire_bomb(&mut self) {
         self.dying = 0; // a bomb in the deathbomb window cancels the death
         self.bombs -= 1;
-        self.bombing = 300;
         self.invuln = self.invuln.max(360);
         self.spell_capturing = false; // bombing forfeits the capture
         self.world.bullets.clear();
         self.cancel_lasers();
         self.bomb_orbs.clear();
-        for i in 0..8 {
-            let a = i as f32 / 8.0 * std::f32::consts::TAU + 0.39;
-            self.bomb_orbs.push(BombOrb {
-                pos: self.pos,
-                vel: [a.cos() * 4.0, a.sin() * 4.0],
-                spd: 4.0,
-                hue: i as f32 / 8.0,
-            });
+        if self.character.is_marisa() {
+            self.master_spark = true;
+            self.bombing = 240;
+        } else {
+            self.master_spark = false;
+            self.bombing = 300;
+            for i in 0..8 {
+                let a = i as f32 / 8.0 * std::f32::consts::TAU + 0.39;
+                self.bomb_orbs.push(BombOrb {
+                    pos: self.pos,
+                    vel: [a.cos() * 4.0, a.sin() * 4.0],
+                    spd: 4.0,
+                    hue: i as f32 / 8.0,
+                });
+            }
         }
         self.spawn_burst(self.pos, 24, 6.0, [0.6, 0.8, 1.0], 16.0);
         self.events.push(Event::Sfx("power1"));
     }
 
-    /// Per-frame bomb update: clears bullets, homes the orbs onto the nearest
-    /// enemy, and damages enemies inside each orb's region (8/frame).
+    /// Per-frame bomb update.
     fn update_bomb(&mut self) {
         self.bombing -= 1;
         self.world.bullets.clear();
+        if self.master_spark {
+            // Wide central beam melts everything above the player.
+            let px = self.pos[0];
+            for e in &mut self.enemies {
+                if e.occupied && e.interactable && e.damageable && (e.pos[0] - px).abs() < 70.0 && e.pos[1] <= self.pos[1] {
+                    e.life -= 25;
+                }
+            }
+            if self.bombing == 0 {
+                self.master_spark = false;
+            }
+            return;
+        }
         // Pick the nearest enemy as the shared homing pivot.
         let pivot = self
             .enemies
@@ -1285,6 +1441,23 @@ impl Stage {
         self.score += dmg_score;
         self.last_enemy_hit = last_hit;
         self.shots.retain(|s| s.pos[1] > -90.0);
+
+        // MarisaB orb beams: damage enemies in each orb's vertical column.
+        if self.beam_dmg > 0 {
+            let orbs = self.orb_positions();
+            for e in &mut self.enemies {
+                if !e.occupied || !e.interactable || !e.damageable {
+                    continue;
+                }
+                for o in orbs {
+                    if (e.pos[0] - o[0]).abs() < 10.0 && e.pos[1] <= o[1] {
+                        e.life -= self.beam_dmg;
+                        self.score += (self.beam_dmg.min(70) / 5 * 10) as i64;
+                        break;
+                    }
+                }
+            }
+        }
 
         // Enemy deaths award the enemy's score value (default 100).
         let mut drops: Vec<([f32; 2], i16)> = Vec::new();
@@ -1761,7 +1934,20 @@ impl Stage {
             cmds.push(sprite_at(AMULET, s.pos, 0.85));
         }
 
-        // Player: the player00.anm runner drives the idle/banking sprite.
+        // MarisaB orb beams behind the player.
+        if self.beam_dmg > 0 {
+            for o in self.orb_positions() {
+                cmds.push(DrawCmd {
+                    tex: TEX_WHITE,
+                    dst: [FIELD_X + o[0] - 5.0, FIELD_Y, 10.0, o[1]],
+                    src: [0.25, 0.25, 0.75, 0.75],
+                    tint: [0.7, 0.5, 1.0, 0.55 + 0.2 * (self.anim as f32 * 0.5).sin()],
+                    rot: 0.0,
+                });
+            }
+        }
+
+        // Player: the player anm runner drives the idle/banking sprite.
         if matches!(self.state, PlayerState::Alive | PlayerState::Cleared(_)) {
             let blink = (self.invuln > 0 || self.dying > 0) && (self.anim / 4) % 2 == 0;
             if !blink {
@@ -1776,7 +1962,7 @@ impl Stage {
                     std::mem::swap(&mut u0, &mut u1);
                 }
                 cmds.push(DrawCmd {
-                    tex: TEX_PLAYER,
+                    tex: self.player_tex,
                     dst: [
                         FIELD_X + self.pos[0] - sp.width / 2.0,
                         FIELD_Y + self.pos[1] - sp.height / 2.0,
@@ -1802,6 +1988,20 @@ impl Stage {
                 m.tint = [1.0, 1.0, 1.0, self.focus_anim];
                 m.rot = self.anim as f32 * 0.1;
                 cmds.push(m);
+            }
+        }
+
+        // Master Spark: a wide flickering vertical beam from the player up.
+        if self.master_spark && self.bombing > 0 {
+            let flick = 0.75 + 0.25 * (self.anim as f32 * 0.8).sin();
+            for (w, col) in [(140.0, [0.9, 0.7, 1.0, 0.45]), (90.0, [1.0, 0.9, 1.0, 0.7]), (40.0, [1.0, 1.0, 1.0, 0.95])] {
+                cmds.push(DrawCmd {
+                    tex: TEX_WHITE,
+                    dst: [FIELD_X + self.pos[0] - w / 2.0, FIELD_Y, w, self.pos[1]],
+                    src: [0.25, 0.25, 0.75, 0.75],
+                    tint: [col[0], col[1], col[2], col[3] * flick],
+                    rot: 0.0,
+                });
             }
         }
 

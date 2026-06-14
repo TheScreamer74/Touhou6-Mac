@@ -26,6 +26,9 @@ struct StageAssets {
     ecl_data: Vec<u8>,
     msg_data: Vec<u8>,
     player: Anm0,
+    player_tex: usize,
+    player_marisa: Anm0,
+    player_marisa_tex: usize,
     stg1enm: Anm0,
     stg1enm2: Anm0,
     etama: Anm0,
@@ -44,7 +47,12 @@ impl StageAssets {
         let msg = Msg::parse(self.msg_data.clone()).expect("parse msg");
         let background = Std::parse(&self.std_data)
             .map(|std| Background::new(std, &self.stg1bg.entries[0], self.bg_tex_slot));
-        Stage::new(ecl, scripts, &self.etama.entries[0], &self.player.entries[0], character, msg, background)
+        let (player_anm, player_tex) = if character.is_marisa() {
+            (&self.player_marisa.entries[0], self.player_marisa_tex)
+        } else {
+            (&self.player.entries[0], self.player_tex)
+        };
+        Stage::new(ecl, scripts, &self.etama.entries[0], player_anm, player_tex, character, msg, background)
     }
 }
 
@@ -332,6 +340,10 @@ fn main() {
     let bg_tex_slot = textures.len();
     let (rgba, w, h) = compose_rgba(&st["stg1bg.png"], Some(st["stg1bg_a.png"].as_slice()));
     textures.push(engine.create_texture(&rgba, w, h));
+    // Slot 12: Marisa player sprite (player01).
+    let player_marisa_tex = textures.len();
+    let (rgba, w, h) = compose_rgba(&cm["player01.png"], Some(cm["player01_a.png"].as_slice()));
+    textures.push(engine.create_texture(&rgba, w, h));
 
     let title = Title::new(entry, 0, 1);
 
@@ -351,6 +363,9 @@ fn main() {
         ecl_data: st["ecldata1.ecl"].clone(),
         msg_data: st_en["msg1.dat"].clone(),
         player: Anm0::parse(&cm["player00.anm"]).expect("parse player00"),
+        player_tex: stage::TEX_PLAYER,
+        player_marisa: Anm0::parse(&cm["player01.anm"]).expect("parse player01"),
+        player_marisa_tex,
         stg1enm: Anm0::parse(&st["stg1enm.anm"]).expect("parse stg1enm"),
         stg1enm2: Anm0::parse(&st["stg1enm2.anm"]).expect("parse stg1enm2"),
         etama: Anm0::parse(&cm["etama3.anm"]).expect("parse etama3"),
