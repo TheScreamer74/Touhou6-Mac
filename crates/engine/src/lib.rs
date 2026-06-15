@@ -800,7 +800,15 @@ impl ApplicationHandler for App {
             (window, surface)
         };
 
+        // Native: use the real window size. Web: the canvas isn't laid out
+        // yet at this point, so window.inner_size() is ~0x0 — configuring the
+        // surface to that renders into a single pixel that CSS then stretches
+        // (the "flat color" bug). Pin the web surface to the fixed play size;
+        // configuring it also sets the canvas drawing-buffer to match.
+        #[cfg(not(target_arch = "wasm32"))]
         let size = window.inner_size();
+        #[cfg(target_arch = "wasm32")]
+        let size = winit::dpi::PhysicalSize::new(SCREEN_W, SCREEN_H);
         // Native (Metal) uses Bgra8Unorm; WebGL/WebGPU surfaces advertise their
         // own preferred formats, so pick a supported non-sRGB one there.
         #[cfg(not(target_arch = "wasm32"))]
