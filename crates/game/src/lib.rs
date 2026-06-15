@@ -146,6 +146,8 @@ pub struct Game {
     /// to build the next stage on clear.
     current_stage: usize,
     character: Character,
+    /// Base texture slot for the character-select art (see build_game).
+    select_tex: usize,
     hiscore: i64,
     /// Native persists the high score to disk; web keeps it in memory only.
     #[cfg(not(target_arch = "wasm32"))]
@@ -234,6 +236,15 @@ pub fn build_game(engine: &Engine, files: &GameFiles, with_audio: bool) -> (Vec<
         });
     }
 
+    // Character-select art (TL.DAT): bg + the four slpl character illustrations
+    // (Reimu A/B, Marisa A/B) + select04 shot-name banners + select03 prompts.
+    let select_tex = textures.len();
+    let (rgba, w, h) = compose_rgba(&files.tl["select00.jpg"], None);
+    textures.push(engine.create_texture(&rgba, w, h)); // +0 bg
+    for art in ["slpl00a", "slpl00b", "slpl01a", "slpl01b", "select04", "select03"] {
+        load(&files.tl, &format!("{art}.png"), Some(&format!("{art}_a.png")), &mut textures);
+    } // +1..+6
+
     let title = Title::new(entry, 0, 1);
 
     let mut audio = if with_audio { Audio::new() } else { None };
@@ -266,6 +277,7 @@ pub fn build_game(engine: &Engine, files: &GameFiles, with_audio: bool) -> (Vec<
         assets,
         current_stage: 0,
         character: Character::ReimuA,
+        select_tex,
         hiscore: 0,
         #[cfg(not(target_arch = "wasm32"))]
         hiscore_path: std::path::PathBuf::new(),
@@ -316,39 +328,60 @@ impl Game {
         }
     }
 
-    /// Render the character-select screen (title art + dark overlay + list).
+    /// Render the character-select with the real EoSD art: the select00
+    /// emblem background, the highlighted character's slpl illustration, and
+    /// the four select04 shot-name banners (current one lit).
     fn charselect_cmds(&self, cursor: usize) -> Vec<DrawCmd> {
-        let mut cmds = vec![
-            DrawCmd {
-                tex: 0, // title background
-                dst: [0.0, 0.0, th06_engine::SCREEN_W as f32, th06_engine::SCREEN_H as f32],
-                src: [0.0, 0.0, 1.0, 1.0],
-                tint: [1.0, 1.0, 1.0, 1.0],
-                rot: 0.0,
-            },
-            DrawCmd {
-                tex: 7, // white pixel, dimmed
-                dst: [0.0, 0.0, th06_engine::SCREEN_W as f32, th06_engine::SCREEN_H as f32],
-                src: [0.25, 0.25, 0.75, 0.75],
-                tint: [0.0, 0.0, 0.05, 0.72],
-                rot: 0.0,
-            },
-        ];
-        stage::draw_text(&mut cmds, [180.0, 90.0], 26.0, [1.0, 1.0, 0.5, 1.0], "SELECT CHARACTER");
-        for (i, ch) in CHARACTERS.iter().enumerate() {
-            let sel = i == cursor;
-            let tint = if sel { [1.0, 1.0, 0.4, 1.0] } else { [0.6, 0.6, 0.7, 1.0] };
-            let label = if sel { format!("> {}", ch.label()) } else { ch.label().to_string() };
-            stage::draw_text(&mut cmds, [220.0, 180.0 + i as f32 * 40.0], 22.0, tint, &label);
-        }
-        let note = match CHARACTERS[cursor] {
-            Character::ReimuA => "Homing amulets - forgiving",
-            Character::ReimuB => "Piercing needles - focused",
-            Character::MarisaA => "Power missiles (WIP)",
-            Character::MarisaB => "Illusion lasers (WIP)",
+        let sw = th06_engine::SCREEN_W as f32;
+        let sh = th06_engine::SCREEN_H as f32;
+        let bg = self.select_tex; // +0
+        let slpl = self.select_tex + 1 + cursor; // +1..+4, CHARACTERS order
+        let banners = self.select_tex + 5; // select04 (4 sprites of 256x48)
+        let prompt = self.select_tex + 6; // select03 (sprite 0 = choose player)
+
+        let full = |tex: usize, c: f32| DrawCmd {
+            tex,
+            dst: [0.0, 0.0, sw, sh],
+            src: [0.0, 0.0, 1.0, 1.0],
+            tint: [c, c, c, 1.0],
+            rot: 0.0,
         };
-        stage::draw_text(&mut cmds, [150.0, 360.0], 14.0, [0.8, 0.85, 1.0, 1.0], note);
-        stage::draw_text(&mut cmds, [150.0, 400.0], 14.0, [0.7, 0.7, 0.7, 1.0], "Z: start   X: back");
+        let mut cmds = vec![full(bg, 1.0)];
+
+        // Character illustration (slpl is one 256x256 sprite), left side.
+        cmds.push(DrawCmd {
+            tex: slpl,
+            dst: [24.0, 96.0, 256.0, 256.0],
+            src: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0, 1.0, 1.0, 1.0],
+            rot: 0.0,
+        });
+
+        // "Select your player" prompt banner (select03 sprite 0), top.
+        cmds.push(DrawCmd {
+            tex: prompt,
+            dst: [180.0, 24.0, 256.0, 64.0],
+            src: [0.0, 0.0, 1.0, 64.0 / 256.0],
+            tint: [1.0, 1.0, 1.0, 1.0],
+            rot: 0.0,
+        });
+
+        // The four shot-name banners (select04, 256x48 each), stacked right;
+        // the selected one full brightness, the rest dimmed.
+        for i in 0..4 {
+            let v0 = i as f32 * 48.0 / 256.0;
+            let v1 = (i as f32 * 48.0 + 48.0) / 256.0;
+            let c = if i == cursor { 1.0 } else { 0.4 };
+            cmds.push(DrawCmd {
+                tex: banners,
+                dst: [310.0, 150.0 + i as f32 * 56.0, 256.0, 48.0],
+                src: [0.0, v0, 1.0, v1],
+                tint: [c, c, c, 1.0],
+                rot: 0.0,
+            });
+        }
+
+        stage::draw_text(&mut cmds, [320.0, 410.0], 13.0, [0.85, 0.85, 0.9, 1.0], "Z: start   X: back");
         cmds
     }
 
