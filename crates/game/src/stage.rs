@@ -1260,11 +1260,14 @@ impl Stage {
                 return;
             }
             3 => {
-                // Master Spark: a screen-wide beam above the player.
-                let px = self.pos[0];
-                for e in &mut self.enemies {
-                    if e.occupied && e.interactable && e.damageable && (e.pos[0] - px).abs() < 120.0 && e.pos[1] <= self.pos[1] {
-                        e.life -= 25;
+                // Master Spark (BombMarisaBCalc): full playfield width, from the
+                // top down to the player, 12 damage per frame (skipping every
+                // 4th, matching `timer % 4`).
+                if self.bombing % 4 != 0 {
+                    for e in &mut self.enemies {
+                        if e.occupied && e.interactable && e.damageable && e.pos[1] <= self.pos[1] {
+                            e.life -= 12;
+                        }
                     }
                 }
                 return;
@@ -2135,13 +2138,25 @@ impl Stage {
             }
         }
 
-        // Master Spark: a wide flickering vertical beam from the player up.
+        // Master Spark: the damage covers the full playfield width above the
+        // player, so draw a full-width glow plus a bright flickering core
+        // rising from the player.
         if self.bomb_kind == 3 && self.bombing > 0 {
             let flick = 0.75 + 0.25 * (self.anim as f32 * 0.8).sin();
-            for (w, col) in [(240.0, [0.9, 0.7, 1.0, 0.4]), (150.0, [1.0, 0.9, 1.0, 0.65]), (70.0, [1.0, 1.0, 1.0, 0.95])] {
+            let h = self.pos[1];
+            // Full-width outer wash.
+            cmds.push(DrawCmd {
+                tex: TEX_WHITE,
+                dst: [FIELD_X, FIELD_Y, FIELD_W, h],
+                src: [0.25, 0.25, 0.75, 0.75],
+                tint: [0.8, 0.6, 1.0, 0.3 * flick],
+                rot: 0.0,
+            });
+            // Bright core layers centred on the player.
+            for (w, col) in [(220.0, [1.0, 0.85, 1.0, 0.6]), (120.0, [1.0, 1.0, 1.0, 0.9]), (54.0, [1.0, 1.0, 1.0, 1.0])] {
                 cmds.push(DrawCmd {
                     tex: TEX_WHITE,
-                    dst: [FIELD_X + self.pos[0] - w / 2.0, FIELD_Y, w, self.pos[1]],
+                    dst: [FIELD_X + self.pos[0] - w / 2.0, FIELD_Y, w, h],
                     src: [0.25, 0.25, 0.75, 0.75],
                     tint: [col[0], col[1], col[2], col[3] * flick],
                     rot: 0.0,

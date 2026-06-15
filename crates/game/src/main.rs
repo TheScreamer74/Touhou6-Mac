@@ -151,7 +151,13 @@ fn main() {
                     held.push(Key::Right);
                 }
             }
-            let pressed: &[Key] = if f % 12 == 0 { &[Key::Shoot] } else { &[] };
+            let pressed: &[Key] = if std::env::var_os("TH06_BOMB").is_some() && f == 40 {
+                &[Key::Bomb]
+            } else if f % 12 == 0 {
+                &[Key::Shoot]
+            } else {
+                &[]
+            };
             frame = game.update(&Input::synthetic(&held, pressed));
         }
         let textures_ref: Vec<&th06_engine::Texture> = textures.iter().collect();
