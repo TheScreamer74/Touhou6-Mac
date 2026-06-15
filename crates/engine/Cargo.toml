@@ -19,6 +19,9 @@ pollster = "0.4"
 
 # Web: wgpu canvas backend, web-audio, JS glue.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# Compile in the WebGL2 backend so the game still runs when WebGPU is
+# unavailable (insecure-context / LAN-IP HTTP, Safari, older browsers).
+wgpu = { version = "25", features = ["webgl"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
