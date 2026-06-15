@@ -121,8 +121,22 @@ fn main() {
         let textures_ref: Vec<&th06_engine::Texture> = textures.iter().collect();
         let mut frame = Frame { cmds: Vec::new(), bg: None, quit: false };
         for f in 0..frames {
+            // Title/char-select: tap Start then confirm. In a stage: hold Shoot,
+            // steer under the boss/nearest enemy, and pulse Shoot to advance
+            // dialogue — so the run actually fights and progresses.
             let input = if f == 3 || f == 15 {
-                Input::synthetic(&[], &[Key::Shoot]) // f3: Start, f15: confirm character
+                Input::synthetic(&[], &[Key::Shoot])
+            } else if game.stage_aim().is_some() {
+                let mut held = vec![Key::Shoot];
+                if let Some((px, Some(tx))) = game.stage_aim() {
+                    if tx < px - 4.0 {
+                        held.push(Key::Left);
+                    } else if tx > px + 4.0 {
+                        held.push(Key::Right);
+                    }
+                }
+                let pressed: &[Key] = if f % 12 == 0 { &[Key::Shoot] } else { &[] };
+                Input::synthetic(&held, pressed)
             } else if f > 3 {
                 Input::synthetic(&[Key::Shoot], &[])
             } else {
