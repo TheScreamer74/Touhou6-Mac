@@ -1206,7 +1206,6 @@ impl Stage {
     fn fire_bomb(&mut self) {
         self.dying = 0; // a bomb in the deathbomb window cancels the death
         self.bombs -= 1;
-        self.invuln = self.invuln.max(360);
         self.spell_capturing = false; // bombing forfeits the capture
         self.world.bullets.clear();
         self.cancel_lasers();
@@ -1217,6 +1216,14 @@ impl Stage {
             Character::MarisaA => 2,
             Character::MarisaB => 3,
         };
+        // Per-bomb invulnerability (BombData SetCurrent): ReimuB 200, MarisaA
+        // 300, the others 360.
+        let invuln = match self.bomb_kind {
+            1 => 200,
+            2 => 300,
+            _ => 360,
+        };
+        self.invuln = self.invuln.max(invuln);
         match self.bomb_kind {
             0 => {
                 // Fantasy Seal: 8 homing orbs.
