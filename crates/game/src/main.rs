@@ -156,8 +156,10 @@ fn main() {
         // Auto-play: hold Shoot, steer under the boss/nearest enemy, and pulse
         // Shoot to advance dialogue — so headless runs actually fight.
         let mut frame = Frame { cmds: Vec::new(), bg: None, quit: false };
-        // TH06_NOSHOOT: steer but never fire — lets a midboss reach its timeout
-        // so the leave-without-kill path can be exercised headlessly.
+        // TH06_NOSHOOT: steer but never fire — lets a midboss/boss reach its
+        // timeout so leave-without-kill and time-out-only spellcards (the ones
+        // that use ex-instructions) are exercised. Dialogue is advanced with
+        // Enter (which doesn't fire shots) so the fight actually starts.
         let no_shoot = std::env::var_os("TH06_NOSHOOT").is_some();
         for f in 0..frames {
             let mut held = if no_shoot { Vec::new() } else { vec![Key::Shoot] };
@@ -169,7 +171,7 @@ fn main() {
                 }
             }
             let pressed: &[Key] = if no_shoot {
-                &[]
+                if f % 12 == 0 { &[Key::Enter] } else { &[] }
             } else if std::env::var_os("TH06_BOMB").is_some() && f == 40 {
                 &[Key::Bomb]
             } else if f % 12 == 0 {

@@ -295,6 +295,10 @@ pub struct World {
     /// Player identity for boss ex-instructions: 0 Reimu / 1 Marisa, shot 0 A / 1 B.
     pub character: u8,
     pub shot_type: u8,
+    /// Sakuya's time-stop (GameManager::isTimeStopped). While set, existing
+    /// bullets freeze in place; toggled by EXINSCALL #4. The boss keeps moving
+    /// and firing, so new bullets are laid down over the frozen field.
+    pub time_stopped: bool,
 }
 
 impl World {
@@ -1096,6 +1100,27 @@ impl Enemy {
                 }
                 if instr.opcode == 121 {
                     match idx {
+                        0 => {
+                            // ExInsCirnoRainbowBallJank (Perfect Freeze): param 0
+                            // freezes every live bullet in place; param 1 releases
+                            // them with a small random acceleration over 220
+                            // frames (ex flag 0x10).
+                            let effect = instr.arg_i32(1);
+                            for b in world.bullets.iter_mut() {
+                                match effect {
+                                    0 => b.speed = 0.0,
+                                    1 => {
+                                        b.ex_flags |= 0x10;
+                                        b.ex_int0 = 220;
+                                        b.timer = 0;
+                                        let a = world.rng.f32_zero_to_one() * std::f32::consts::TAU
+                                            - std::f32::consts::PI;
+                                        b.ex_accel = [a.cos() * 0.01, a.sin() * 0.01];
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                         1 => {
                             // ExInsShootAtRandomArea: fire the configured pattern
                             // from a random point in a box (w=param, h=0.75w)
@@ -1117,6 +1142,17 @@ impl Enemy {
                             self.ctx.ivars[0] = v[0];
                             self.ctx.ivars[1] = v[1];
                             self.ctx.ivars[2] = v[2];
+                        }
+                        4 => {
+                            // ExInsStage56Func4: param < 2 toggles Sakuya's
+                            // time-stop (isTimeStopped = param). The param >= 2
+                            // bullet-redirect branch needs per-bullet sprite-height
+                            // tests our simplified bullets lack, so it is skipped.
+                            let param = instr.arg_i32(1);
+                            if param < 2 {
+                                world.time_stopped = param != 0;
+                            }
+                            self.ctx.ivars[1] = 0; // currentContext.var2 = 0
                         }
                         _ => {}
                     }
@@ -1334,6 +1370,7 @@ impl Enemy {
         }
         if self.is_boss {
             world.boss_present = false;
+            world.time_stopped = false;
             world.events.push(WorldEvent::BossSet(false));
         }
     }
@@ -1358,6 +1395,7 @@ impl Enemy {
         }
         if self.is_boss && (self.death_mode == 0 || self.death_mode == 1) {
             world.boss_present = false;
+            world.time_stopped = false;
             world.events.push(WorldEvent::BossSet(false));
         }
         if self.death_callback >= 0 {

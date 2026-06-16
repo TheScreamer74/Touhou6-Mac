@@ -720,6 +720,7 @@ impl Stage {
                 power: 0,
                 character: character.is_marisa() as u8,
                 shot_type: matches!(character, Character::ReimuB | Character::MarisaB) as u8,
+                time_stopped: false,
             },
             enemies: Vec::new(),
             anims: Vec::new(),
@@ -1378,6 +1379,7 @@ impl Stage {
         self.bombs = 3;
         self.spell_capturing = false; // dying forfeits the capture
         self.world.bullets.clear();
+        self.world.time_stopped = false;
         self.cancel_lasers();
         self.spawn_burst(self.pos, 20, 4.0, [1.0, 0.5, 0.5], 12.0);
         self.state = PlayerState::Dead(60);
@@ -1489,6 +1491,11 @@ impl Stage {
     }
 
     fn update_bullets(&mut self) {
+        // Sakuya's time-stop: bullets and lasers freeze in place (the boss keeps
+        // moving and laying down new ones over the frozen field).
+        if self.world.time_stopped {
+            return;
+        }
         for b in &mut self.world.bullets {
             b.timer += 1;
             // Ex behaviors, ported from BulletManager::OnUpdate.
