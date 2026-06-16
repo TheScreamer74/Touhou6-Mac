@@ -40,10 +40,9 @@ pub struct GameFiles {
     pub bgm: HashMap<String, Vec<u8>>,
 }
 
-const SFX_NAMES: [&str; 13] = [
-    "plst00", "enep00", "enep01", "pldead00", "tan00", "tan01", "tan02", "damage00", "power1",
-    "cat00", "item00", "powerup", "graze",
-];
+/// Every sound effect (SoundPlayer.cpp g_SFXList order; index == SoundIdx).
+/// Loaded by basename from the archive; absent ones are simply skipped.
+use stage::SFX_BY_IDX as SFX_NAMES;
 
 /// All BGM tracks used in the main game (title + 6 stages × field/boss).
 const BGM_NAMES: [&str; 13] = [

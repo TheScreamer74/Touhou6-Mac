@@ -41,6 +41,15 @@ pub const TEX_ASCII: usize = 8;
 pub const TEX_FACE_REIMU: usize = 9; // face00a (Reimu player portrait)
 pub const TEX_FACE_MARISA: usize = 10; // face01a (Marisa player portrait)
 
+/// Sound effects by SoundIdx (SoundPlayer.cpp g_SFXList order). Indexing this
+/// with the raw idx the ECL/bullet code passes gives the right cue — the
+/// previous ad-hoc map had several wrong (e.g. idx 5 played power1, not tan00).
+pub const SFX_BY_IDX: [&str; 26] = [
+    "plst00", "enep00", "pldead00", "power0", "power1", "tan00", "tan01", "tan02", "ok00",
+    "cancel00", "select00", "gun00", "cat00", "lazer00", "lazer01", "enep01", "nep00", "damage00",
+    "item00", "kira00", "kira01", "kira02", "extend", "timeout", "graze", "powerup",
+];
+
 pub enum Event {
     Sfx(&'static str),
     Bgm(&'static str),
@@ -2018,17 +2027,8 @@ impl Stage {
         for ev in events {
             match ev {
                 WorldEvent::Sfx(idx) => {
-                    // SoundIdx -> our named sfx; a few common ones mapped.
-                    let name = match idx {
-                        0 => "plst00",
-                        1 => "enep00",
-                        5 => "power1",
-                        16 => "tan00",
-                        17 => "tan01",
-                        18 => "tan02",
-                        22 => "cat00",
-                        _ => "tan00",
-                    };
+                    // SoundIdx indexes g_SFXList directly (SFX_BY_IDX).
+                    let name = SFX_BY_IDX.get(idx as usize).copied().unwrap_or("tan00");
                     self.events.push(Event::Sfx(name));
                 }
                 WorldEvent::SpellcardStart(id, _raw) => {
