@@ -1,7 +1,7 @@
 <div align="center">
 
 # 東方紅魔郷
-## Touhou 6 — the Embodiment of Scarlet Devil, for macOS
+## Touhou 6 — the Embodiment of Scarlet Devil, for macOS & the Web
 
 **A native Apple Silicon reimplementation of ZUN's 2002 classic,**
 **built in Rust on Metal (and WebAssembly) — bring your own copy of the game.**
