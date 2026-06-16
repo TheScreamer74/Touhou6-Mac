@@ -20,8 +20,8 @@ your own legally purchased copy of *the Embodiment of Scarlet Devil* (v1.02h).
 Install the Rust toolchain from [rustup.rs](https://rustup.rs), then:
 
 ```sh
-git clone https://github.com/TheScreamer74/Touhou6-Mac.git
-cd Touhou6-Mac
+git clone https://github.com/TheScreamer74/Touhou6.git
+cd Touhou6
 cargo run -p th06 -- --game-dir "/path/to/your/th06/folder"
 ```
 
@@ -72,7 +72,7 @@ Use the issue templates. For gameplay-accuracy bugs, include the stage,
 character/shot type, and what the original game does differently.
 
 For security or copyright concerns, do **not** open a public issue — use a
-[private security advisory](https://github.com/TheScreamer74/Touhou6-Mac/security/advisories/new)
+[private security advisory](https://github.com/TheScreamer74/Touhou6/security/advisories/new)
 instead.
 
 ## License

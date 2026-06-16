@@ -72,8 +72,8 @@ decompilation — so behavior matches the real thing, including the original RNG
 
 ```sh
 # Rust toolchain (rustup.rs), then:
-git clone https://github.com/TheScreamer74/Touhou6-Mac.git
-cd Touhou6-Mac
+git clone https://github.com/TheScreamer74/Touhou6.git
+cd Touhou6
 cargo run -p th06 -- --game-dir "/path/to/your/th06/folder"
 ```
 

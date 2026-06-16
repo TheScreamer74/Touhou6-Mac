@@ -11,7 +11,7 @@ before reporting.
 **Do not open a public issue for security reports.**
 
 Report privately via a
-[GitHub security advisory](https://github.com/TheScreamer74/Touhou6-Mac/security/advisories/new).
+[GitHub security advisory](https://github.com/TheScreamer74/Touhou6/security/advisories/new).
 If you cannot use that, contact the maintainer through their GitHub profile
 ([@TheScreamer74](https://github.com/TheScreamer74)).
 

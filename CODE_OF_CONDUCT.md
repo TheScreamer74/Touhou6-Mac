@@ -61,7 +61,7 @@ representing the project.
 ## Enforcement
 
 Report unacceptable behavior, or copyright/piracy violations, by opening a
-[private security advisory](https://github.com/TheScreamer74/Touhou6-Mac/security/advisories/new)
+[private security advisory](https://github.com/TheScreamer74/Touhou6/security/advisories/new)
 or contacting the maintainer directly via their GitHub profile
 ([@TheScreamer74](https://github.com/TheScreamer74)).
 
