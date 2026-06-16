@@ -32,9 +32,13 @@ Behavior that is not acceptable:
 This project is a clean-room engine reimplementation. The following are
 **hard requirements**, not preferences:
 
-1. **No copyrighted assets.** Do not commit, attach, link, or request game
-   data files, sprites, music, or ROMs. This repository contains code only.
-   Issues or PRs containing copyrighted material will be removed.
+1. **No copyrighted asset files.** Do not commit, attach, link, or request
+   game *data files* — `.DAT` archives, ripped sprite/tile sheets, BGM/SFX
+   audio files, ROMs, or the original executables. This repository contains
+   code only; anything that lets someone reconstruct game data will be removed.
+
+   Screenshots and short gameplay clips for bug reports or discussion are
+   fine — they are fan content, not redistributable game data.
 
 2. **Bring your own copy.** All discussion assumes users legally own
    *Touhou Koumakyou ~ the Embodiment of Scarlet Devil*. Do not ask where to

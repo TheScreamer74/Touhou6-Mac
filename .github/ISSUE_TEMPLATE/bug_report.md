@@ -6,7 +6,8 @@ labels: bug
 assignees: ''
 ---
 
-**Do not attach game data files.** No `.DAT`, sprites, or music — code only.
+**Do not attach game data files** (`.DAT`, ripped sprite sheets, BGM/SFX audio,
+executables). Screenshots and short gameplay clips are welcome.
 
 ## Description
 

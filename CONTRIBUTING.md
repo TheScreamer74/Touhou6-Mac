@@ -9,8 +9,9 @@ there are not optional.
 
 ## The one rule that matters most
 
-**Never commit, attach, or link copyrighted game data.** No `.DAT` files,
-sprites, music, or executables. This repository is code only. Patches that add
+**Never commit, attach, or link copyrighted game data files.** No `.DAT`
+archives, ripped sprite sheets, BGM/SFX audio, or executables. This repository
+is code only. (Screenshots and short gameplay clips in issues are fine.) Patches that add
 copyrighted assets will be rejected outright. All testing assumes you supply
 your own legally purchased copy of *the Embodiment of Scarlet Devil* (v1.02h).
 
