@@ -105,7 +105,8 @@ pub struct Bullet {
     pub timer: i32,
     pub ex_flags: u32,
     /// flag 0x10: acceleration vector; 0x20: (speed delta, angle delta);
-    /// 0x40: (rotation, new speed) every `ex_int0` frames, `ex_int1` times.
+    /// dir-change group 0x40/0x80/0x100: (rotation, new speed) applied every
+    /// `ex_int0` frames, `ex_int1` times — rotate / aim-at-player / absolute.
     pub ex_accel: [f32; 2],
     pub ex_f: [f32; 2],
     pub ex_int0: i32,
@@ -1522,7 +1523,9 @@ pub fn spawn_bullet_pattern(world: &mut World, props: &BulletProps, mirror: bool
                 ex_f = [props.ex_floats[0], props.ex_floats[1]];
                 ex_int0 = props.ex_ints[0];
             }
-            if props.flags & 0x40 != 0 {
+            if props.flags & 0x1c0 != 0 {
+                // Direction-change group (0x40 rotate / 0x80 aim-at-player /
+                // 0x100 absolute): shared dirChange* setup.
                 ex_f = [
                     props.ex_floats[0],
                     if props.ex_floats[1] >= 0.0 { props.ex_floats[1] } else { speed },

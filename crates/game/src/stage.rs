@@ -1528,6 +1528,7 @@ impl Stage {
         if self.world.time_stopped {
             return;
         }
+        let player = self.world.player_pos;
         for b in &mut self.world.bullets {
             b.timer += 1;
             // Ex behaviors, ported from BulletManager::OnUpdate.
@@ -1557,13 +1558,41 @@ impl Stage {
                     b.speed += b.ex_f[0];
                 }
             }
-            if b.ex_flags & 0x40 != 0 && b.ex_int0 > 0 && b.timer >= b.ex_int0 * (b.ex_count + 1) {
-                b.ex_count += 1;
-                if b.ex_count >= b.ex_int1 {
-                    b.ex_flags &= !0x40;
+            // Direction-change group (exFlags & 0x1c0): every `ex_int0` frames,
+            // up to `ex_int1` times, re-point the bullet and reset its speed;
+            // between changes the speed ramps down to a near-stop. The three
+            // modes differ only in how the new angle is chosen:
+            //   0x40  rotate by a fixed delta   (angle += rotation)
+            //   0x100 snap to an absolute angle (angle  = rotation)
+            //   0x80  re-aim at the player      (angle  = atan2(player) + rotation)
+            // 0x80 is Cirno's Perfect Freeze: shards freeze, then home.
+            let mut move_speed = b.speed;
+            let mode = b.ex_flags & 0x1c0;
+            if mode != 0 {
+                let interval = b.ex_int0;
+                let trigger = if interval > 0 {
+                    b.timer >= interval * (b.ex_count + 1)
+                } else {
+                    true
+                };
+                if trigger {
+                    b.ex_count += 1;
+                    if b.ex_count >= b.ex_int1 {
+                        b.ex_flags &= !mode;
+                    }
+                    b.angle = if mode & 0x40 != 0 {
+                        b.angle + b.ex_f[0]
+                    } else if mode & 0x100 != 0 {
+                        b.ex_f[0]
+                    } else {
+                        (player[1] - b.pos[1]).atan2(player[0] - b.pos[0]) + b.ex_f[0]
+                    };
+                    b.speed = b.ex_f[1];
+                    move_speed = b.speed;
+                } else {
+                    let t = b.timer as f32 - (interval * b.ex_count) as f32;
+                    move_speed = b.speed - t * b.speed / interval as f32;
                 }
-                b.angle += b.ex_f[0];
-                b.speed = b.ex_f[1];
             }
             let factor = if b.spawn_delay > 0 {
                 b.spawn_delay -= 1;
@@ -1571,8 +1600,8 @@ impl Stage {
             } else {
                 1.0
             };
-            b.pos[0] += b.angle.cos() * b.speed * factor;
-            b.pos[1] += b.angle.sin() * b.speed * factor;
+            b.pos[0] += b.angle.cos() * move_speed * factor;
+            b.pos[1] += b.angle.sin() * move_speed * factor;
         }
         self.world.bullets.retain(|b| {
             b.pos[0] > -20.0 && b.pos[0] < FIELD_W + 20.0 && b.pos[1] > -20.0 && b.pos[1] < FIELD_H + 20.0

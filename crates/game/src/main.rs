@@ -126,7 +126,9 @@ fn main() {
     };
 
     let engine = Engine::new();
-    let (textures, mut game) = build_game(&engine, &files, screenshot.is_none());
+    // Headless dumps (screenshot / record / demo) run silent.
+    let with_audio = screenshot.is_none() && record.is_none() && demo.is_none();
+    let (textures, mut game) = build_game(&engine, &files, with_audio);
 
     let hiscore_path = game_dir.join("th06_hiscore.txt");
     game.set_hiscore(load_hiscore(&hiscore_path));
