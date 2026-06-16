@@ -362,8 +362,16 @@ impl Game {
     fn save_scores(&self) {}
 
     /// Jump straight into a stage (native `--scene stage` debugging). `stage`
-    /// is 0-based and clamped to the available stages.
-    pub fn debug_start_stage(&mut self, character: Character, lives: Option<i32>, stage: usize) {
+    /// is 0-based and clamped to the available stages. Optional lives / power /
+    /// score seed the starting state.
+    pub fn debug_start_stage(
+        &mut self,
+        character: Character,
+        lives: Option<i32>,
+        stage: usize,
+        power: Option<i32>,
+        score: Option<i64>,
+    ) {
         self.character = character;
         self.current_stage = stage.min(N_STAGES - 1);
         let mut s = self.assets.new_stage(self.current_stage, character);
@@ -371,7 +379,53 @@ impl Game {
         if let Some(l) = lives {
             s.set_lives(l);
         }
+        if let Some(p) = power {
+            s.set_power(p);
+        }
+        if let Some(sc) = score {
+            s.set_score(sc);
+        }
         self.scene = Scene::Stage(Box::new(s));
+    }
+
+    /// Debug: fast-forward the current stage's simulation until the midboss
+    /// (`to_boss=false`) or the real boss (`to_boss=true`) is on screen, so the
+    /// fight can be debugged/recorded without playing through the trash. Runs
+    /// invulnerable, never shoots (keeps the boss alive) and taps Enter to clear
+    /// the pre-boss dialogue. The caller must enable god mode first.
+    pub fn debug_warp(&mut self, to_boss: bool) -> bool {
+        // Count boss-present episodes: the 1st is the midboss, the 2nd is the
+        // real boss. Never shoot, so the midboss times out and leaves (it would
+        // stall the boss timeline if killed); Enter is pulsed to step the
+        // pre-boss dialogue. The caller forces god, so the player can't die.
+        for _i in 0..40_000 {
+            // Never shoot: a killed midboss/trash stalls the boss timeline, and
+            // shooting toward an overlapping spawn corrupts the boss state. The
+            // midboss times out and leaves; Enter (pulsed) steps the pre-boss
+            // dialogue; god (forced by the caller) keeps the player alive.
+            let mut held = Vec::new();
+            if let Some((px, Some(tx))) = self.stage_aim() {
+                if tx < px - 4.0 {
+                    held.push(Key::Left);
+                } else if tx > px + 4.0 {
+                    held.push(Key::Right);
+                }
+            }
+            let pressed: &[Key] = if _i % 12 == 0 { &[Key::Enter] } else { &[] };
+            self.update(&Input::synthetic(&held, pressed));
+            if let Scene::Stage(s) = &self.scene {
+                // Detect the on-screen boss entity directly (the global
+                // boss_present flag can be stale when bosses overlap). The
+                // pre-boss dialogue starting the boss music distinguishes the
+                // real boss from the dialogue-less midboss.
+                if s.debug_boss_onscreen() && (s.debug_boss_music_started() == to_boss) {
+                    return true;
+                }
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     /// Headless auto-play aim: (player_x, target_x) while in a stage.

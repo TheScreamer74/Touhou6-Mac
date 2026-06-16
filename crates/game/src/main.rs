@@ -88,6 +88,11 @@ fn main() {
     let mut debug_char = 0usize;
     let mut demo: Option<String> = None;
     let mut demo_interval = 300u32;
+    let mut record: Option<String> = None;
+    let mut debug_power: Option<i32> = None;
+    let mut debug_score: Option<i64> = None;
+    let mut god = false;
+    let mut warp: Option<bool> = None; // Some(false) = midboss, Some(true) = boss
     let mut game_dir = String::from("../TH06 ~ The Embodiment of Scarlet Devil/kouma");
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -99,6 +104,12 @@ fn main() {
             "--char" => debug_char = args.next().expect("--char <0-3>").parse().expect("char"),
             "--demo" => demo = Some(args.next().expect("--demo <out_dir>")),
             "--demo-interval" => demo_interval = args.next().expect("--demo-interval <n>").parse().expect("interval"),
+            "--record" => record = Some(args.next().expect("--record <out_dir>")),
+            "--power" => debug_power = Some(args.next().expect("--power <0-128>").parse().expect("power")),
+            "--score" => debug_score = Some(args.next().expect("--score <n>").parse().expect("score")),
+            "--god" => god = true,
+            "--midboss" => warp = Some(false),
+            "--boss" => warp = Some(true),
             "--game-dir" => game_dir = args.next().expect("--game-dir <path>"),
             other => panic!("unknown argument: {other}"),
         }
@@ -125,10 +136,62 @@ fn main() {
     game.set_scores(load_scores(&scores_path));
     game.set_scores_path(scores_path);
 
+    // `--god` makes the player invulnerable (the collide() check reads this).
+    // Safe: still single-threaded here, before the game/run loop starts.
+    if god {
+        unsafe { std::env::set_var("TH06_GOD", "1") };
+    }
+
     if scene_arg == "stage" {
         let ch = [Character::ReimuA, Character::ReimuB, Character::MarisaA, Character::MarisaB]
             [debug_char.min(3)];
-        game.debug_start_stage(ch, debug_lives, debug_stage.saturating_sub(1));
+        game.debug_start_stage(ch, debug_lives, debug_stage.saturating_sub(1), debug_power, debug_score);
+        // `--midboss` / `--boss`: fast-forward straight to that fight. The warp
+        // must be invulnerable; restore the chosen god state afterwards.
+        if let Some(to_boss) = warp {
+            let had_god = std::env::var_os("TH06_GOD").is_some();
+            unsafe { std::env::set_var("TH06_GOD", "1") };
+            if !game.debug_warp(to_boss) {
+                eprintln!("warp: target boss never appeared");
+            }
+            if !had_god {
+                unsafe { std::env::remove_var("TH06_GOD") };
+            }
+        }
+    }
+
+    if let Some(dir) = record.clone() {
+        // Record EVERY frame of the auto-played stage to a PNG sequence (encode
+        // to video afterwards). Same auto-play as --screenshot: hold Shoot and
+        // steer under the boss (TH06_GOD to survive, TH06_NOSHOOT to let the
+        // boss cycle every card via timeouts).
+        std::fs::create_dir_all(&dir).expect("create record dir");
+        let textures_ref: Vec<&th06_engine::Texture> = textures.iter().collect();
+        let no_shoot = std::env::var_os("TH06_NOSHOOT").is_some();
+        for f in 0..frames {
+            let mut held = if no_shoot { Vec::new() } else { vec![Key::Shoot] };
+            if let Some((px, Some(tx))) = game.stage_aim() {
+                if tx < px - 4.0 {
+                    held.push(Key::Left);
+                } else if tx > px + 4.0 {
+                    held.push(Key::Right);
+                }
+            }
+            let pressed: &[Key] = if no_shoot {
+                if f % 12 == 0 { &[Key::Enter] } else { &[] }
+            } else if f % 12 == 0 {
+                &[Key::Shoot]
+            } else {
+                &[]
+            };
+            let frame = game.update(&Input::synthetic(&held, pressed));
+            let pixels = engine.render_to_image(&frame.cmds, &textures_ref, frame.bg.as_ref());
+            let path = format!("{dir}/frame_{f:06}.png");
+            image::save_buffer(&path, &pixels, th06_engine::SCREEN_W, th06_engine::SCREEN_H, image::ColorType::Rgba8)
+                .expect("save record frame");
+        }
+        println!("recorded {frames} frames to {dir}");
+        return;
     }
 
     if let Some(dir) = demo.clone() {

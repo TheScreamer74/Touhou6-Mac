@@ -819,6 +819,26 @@ impl Stage {
         self.lives = lives;
     }
 
+    /// Debug: seed starting power / score.
+    pub fn set_power(&mut self, power: i32) {
+        self.world.power = power.clamp(0, 128);
+    }
+    pub fn set_score(&mut self, score: i64) {
+        self.score = score;
+    }
+
+    /// Debug warp: true once a boss/midboss enemy is actually on screen. (The
+    /// global boss_present flag can read stale when bosses overlap, so the warp
+    /// checks the live entities instead.)
+    pub fn debug_boss_onscreen(&self) -> bool {
+        self.enemies.iter().any(|e| e.occupied && e.is_boss)
+    }
+    /// The pre-boss dialogue starts the boss music — true only for the real
+    /// boss, not the dialogue-less midboss.
+    pub fn debug_boss_music_started(&self) -> bool {
+        self.boss_bgm_started
+    }
+
     /// Current player x (headless auto-play harness).
     pub fn player_x(&self) -> f32 {
         self.pos[0]
