@@ -554,7 +554,7 @@ fn spellcard_name(id: i32) -> &'static str {
     match id {
         0 => "Moon Sign \"Moonlight Ray\"",
         1 => "Night Sign \"Night Bird\"",
-        2 => "Dark Sign \"Demarcation\"",
+        2 => "Darkness Sign \"Demarcation\"",
         _ => "Spell Card",
     }
 }
@@ -2486,40 +2486,36 @@ impl Stage {
             });
         }
 
-        // Boss attack timer (top center of the field).
+        // Boss attack timer at the field top-right, "%.2d" coloured by seconds
+        // left (Gui.cpp:1007-1037, COLOR1-4).
         if let Some(secs) = self
             .enemies
             .iter()
             .find(|e| e.is_boss && e.occupied)
             .and_then(|e| e.spell_seconds_left())
         {
-            draw_text(
-                &mut cmds,
-                [FIELD_X + FIELD_W / 2.0 - 16.0, FIELD_Y + 12.0],
-                16.0,
-                [1.0, 1.0, 1.0, 0.9],
-                &format!("{secs:02}"),
-            );
+            let secs = secs.min(99);
+            let tint = if secs >= 20 {
+                [0.627, 0.816, 1.0, 1.0] // COLOR1 0xa0d0ff
+            } else if secs >= 10 {
+                [0.627, 0.502, 1.0, 1.0] // COLOR2 0xa080ff
+            } else if secs >= 5 {
+                [0.878, 0.502, 0.753, 1.0] // COLOR3 0xe080c0
+            } else {
+                [1.0, 0.251, 0.251, 1.0] // COLOR4 0xff4040
+            };
+            draw_text(&mut cmds, [FIELD_X + FIELD_W - 28.0, FIELD_Y + 8.0], 16.0, tint, &format!("{secs:02}"));
         }
 
-        // Spellcard name banner (right-aligned near the top of the field).
+        // Spellcard name centred near the top on a blue bar (the decomp's
+        // enemySpellcardBackground + enemySpellcardName).
         if self.spell_active && !self.spell_name.is_empty() {
-            let w = self.spell_name.len() as f32 * 14.0 * 0.75;
-            draw_text(
-                &mut cmds,
-                [FIELD_X + FIELD_W - w - 8.0, FIELD_Y + 30.0],
-                14.0,
-                [1.0, 0.85, 0.9, 0.95],
-                &self.spell_name,
-            );
-            // "Spell Card" marker to the left.
-            draw_text(
-                &mut cmds,
-                [FIELD_X + 8.0, FIELD_Y + 30.0],
-                12.0,
-                [0.8, 0.8, 1.0, 0.8],
-                "Spell Card",
-            );
+            let w = self.spell_name.chars().count() as f32 * 14.0 * 0.75;
+            // Centred, but kept right of the "Enemy" label + spell count.
+            let x = (FIELD_X + (FIELD_W - w) / 2.0).max(FIELD_X + 112.0);
+            let y = FIELD_Y + 22.0;
+            cmds.push(rect([x - 10.0, y - 2.0, w + 20.0, 18.0], [0.15, 0.2, 0.55, 0.6]));
+            draw_text(&mut cmds, [x, y], 14.0, [1.0, 0.94, 0.94, 1.0], &self.spell_name);
         }
 
         // Capture / failure result flash.
@@ -2679,6 +2675,7 @@ impl Stage {
         }
 
         // Remaining-attack count (eclSetLives) at field (80, 16), yellow.
+        // (The spell timer and name banner are drawn by the field pass.)
         if boss.spell_count > 0 {
             draw_text(
                 cmds,
@@ -2686,34 +2683,6 @@ impl Stage {
                 14.0,
                 [1.0, 1.0, 0.5, 1.0],
                 &boss.spell_count.to_string(),
-            );
-        }
-
-        // Spellcard timer at the field's top-right, colour by seconds left.
-        if let Some(secs) = boss.spell_seconds_left() {
-            let secs = secs.min(99);
-            let tint = if secs >= 20 {
-                [0.627, 0.816, 1.0, 1.0] // COLOR1 0xa0d0ff
-            } else if secs >= 10 {
-                [0.627, 0.502, 1.0, 1.0] // COLOR2 0xa080ff
-            } else if secs >= 5 {
-                [0.878, 0.502, 0.753, 1.0] // COLOR3 0xe080c0
-            } else {
-                [1.0, 0.251, 0.251, 1.0] // COLOR4 0xff4040
-            };
-            draw_text(cmds, [FIELD_X + FIELD_W - 32.0, FIELD_Y + 10.0], 15.0, tint, &format!("{:02}", secs));
-        }
-
-        // Spell name (ASCII; Shift-JIS names fall back to "Spell Card"),
-        // right-aligned at the bottom of the field while the spell is active.
-        if self.spell_active && !self.spell_name.is_empty() {
-            let width = self.spell_name.chars().count() as f32 * 13.0 * 0.75;
-            draw_text(
-                cmds,
-                [FIELD_X + FIELD_W - width - 8.0, FIELD_Y + FIELD_H - 22.0],
-                13.0,
-                [1.0, 0.95, 0.95, 1.0],
-                &self.spell_name,
             );
         }
     }
