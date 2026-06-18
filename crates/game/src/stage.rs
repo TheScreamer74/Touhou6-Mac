@@ -556,6 +556,16 @@ fn spellcard_name(id: i32) -> &'static str {
     }
 }
 
+/// Per-spellcard capture score, indexed by spellcard id (g_SpellcardScore,
+/// EclManager.cpp:18). The capture bonus is `score * (1 + secondsLeft/10)`.
+const SPELLCARD_SCORE: [i64; 64] = [
+    200000, 200000, 200000, 200000, 200000, 200000, 200000, 250000, 250000, 250000, 250000, 250000, 250000,
+    250000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000,
+    300000, 300000, 300000, 300000, 300000, 300000, 400000, 400000, 400000, 400000, 400000, 400000, 400000,
+    400000, 500000, 500000, 500000, 500000, 500000, 500000, 600000, 600000, 600000, 600000, 600000, 700000,
+    700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000,
+];
+
 /// Item drop pattern for ITEM_RANDOM_ITEM enemies (g_RandomItems).
 const RANDOM_ITEMS: [i32; 32] = [
     0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 2,
@@ -703,6 +713,12 @@ pub struct Stage {
     spell_capturing: bool,
     spell_result: u32,
     spell_captured: bool,
+    /// Current spellcard id (g_SpellcardScore index) and last-seen seconds left,
+    /// for the capture bonus; the "Spell Card Bonus!" popup (frames, amount).
+    spell_id: i32,
+    spell_secs: i32,
+    spell_bonus_timer: u32,
+    spell_bonus_amount: i64,
     boss_bgm_started: bool,
     /// Dialogue portrait texture slots (player left / boss right).
     face_player_tex: usize,
@@ -796,6 +812,10 @@ impl Stage {
             rand_item_spawn: 0,
             spell_active: false,
             spell_name: String::new(),
+            spell_id: 0,
+            spell_secs: 0,
+            spell_bonus_timer: 0,
+            spell_bonus_amount: 0,
             spell_capturing: false,
             spell_result: 0,
             spell_captured: false,
@@ -912,11 +932,21 @@ impl Stage {
         // "Full Power Mode!!" popup when power first reaches max.
         let full = self.world.power >= 128;
         if full && !self.was_full {
-            self.full_power_timer = 120;
+            self.full_power_timer = 180;
         }
         self.was_full = full;
         self.full_power_timer = self.full_power_timer.saturating_sub(1);
         self.roll_boss_bar();
+        // Track the boss spell timer (for the capture bonus) and tick popups.
+        if let Some(secs) = self
+            .enemies
+            .iter()
+            .find(|e| e.is_boss && e.occupied)
+            .and_then(|e| e.spell_seconds_left())
+        {
+            self.spell_secs = secs;
+        }
+        self.spell_bonus_timer = self.spell_bonus_timer.saturating_sub(1);
 
         // Player state machine.
         let mut respawn = false;
@@ -2123,6 +2153,7 @@ impl Stage {
                 WorldEvent::SpellcardStart(id, _raw) => {
                     self.spell_active = true;
                     self.spell_name = spellcard_name(id).to_string();
+                    self.spell_id = id;
                     self.spell_capturing = true;
                     // SPELLCARDSTART cancels the prior pattern into point items.
                     self.bullets_to_points();
@@ -2135,6 +2166,18 @@ impl Stage {
                         self.spell_captured = self.spell_capturing;
                     }
                     self.spell_active = false;
+                    // Capture bonus: score * (1 + secondsLeft/10) (EclManager.cpp:
+                    // 759-766), score from the per-card table; show the popup.
+                    if captured {
+                        let base = SPELLCARD_SCORE
+                            .get(self.spell_id.max(0) as usize)
+                            .copied()
+                            .unwrap_or(0);
+                        let bonus = base + base * self.spell_secs.max(0) as i64 / 10;
+                        self.score += bonus;
+                        self.spell_bonus_amount = bonus;
+                        self.spell_bonus_timer = 280;
+                    }
                     // A captured card (SPELLCARDEND, isActive==1) rewards the
                     // remaining bullets as point items; a timeout just clears.
                     if captured {
@@ -2774,9 +2817,26 @@ impl Stage {
         draw_num(cmds, [vx, 206.0], val, &format!("{}", self.graze));
         draw_num(cmds, [vx, 226.0], val, &format!("{}", self.point_items));
 
-        // "Full Power Mode!!" popup at max power (Gui::ShowFullPowerMode).
+        // "Full Power Mode!!" popup (Gui.cpp:185-190,908-922): pale blue, slides
+        // in from the right edge to x=104 over 30 frames, shown 180 frames.
         if self.full_power_timer > 0 {
-            draw_text(cmds, [FIELD_X + 92.0, 232.0], 16.0, [1.0, 1.0, 0.4, 1.0], "Full Power Mode!!");
+            let elapsed = 180 - self.full_power_timer.min(180);
+            let px = if elapsed < 30 {
+                640.0 - elapsed as f32 * 312.0 / 30.0
+            } else {
+                104.0
+            };
+            draw_num(cmds, [px, 232.0], [0.753, 0.690, 1.0, 1.0], "Full Power Mode!!");
+        }
+
+        // "Spell Card Bonus!" + "+N" popup (Gui.cpp:192-210), centred near top.
+        if self.spell_bonus_timer > 0 {
+            let title = "Spell Card Bonus!";
+            let tx = (FIELD_W - title.len() as f32 * 16.0) / 2.0 + FIELD_X;
+            draw_num(cmds, [tx, FIELD_Y + 64.0], [1.0, 0.0, 0.0, 1.0], title);
+            let amt = format!("+{}", self.spell_bonus_amount);
+            let ax = (FIELD_W - amt.len() as f32 * 32.0) / 2.0 + FIELD_X;
+            draw_num_scaled(cmds, [ax, FIELD_Y + 80.0], 2.0, [1.0, 0.502, 0.502, 1.0], &amt);
         }
 
         self.draw_boss_ui(cmds);
@@ -2874,6 +2934,12 @@ fn stage_clear_bonus(
 /// Draw HUD numbers/text with the original AsciiManager metrics: a 15px glyph
 /// advancing 14px per character (`charWidth = 14 * scale.x`, AsciiManager.cpp).
 fn draw_num(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], tint: [f32; 4], text: &str) {
+    draw_num_scaled(cmds, pos, 1.0, tint, text);
+}
+
+/// As [`draw_num`] but with an AsciiManager scale (e.g. 2.0 for the spellcard
+/// bonus "+N").
+fn draw_num_scaled(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], scale: f32, tint: [f32; 4], text: &str) {
     let mut x = pos[0];
     for ch in text.chars() {
         let c = ch as u32;
@@ -2883,7 +2949,7 @@ fn draw_num(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], tint: [f32; 4], text: &str) 
             let e = 0.5 / 256.0;
             cmds.push(DrawCmd {
                 tex: TEX_ASCII,
-                dst: [x.round(), pos[1].round(), 15.0, 15.0],
+                dst: [x.round(), pos[1].round(), 15.0 * scale, 15.0 * scale],
                 src: [
                     col * 16.0 / 256.0 + e,
                     row * 16.0 / 256.0 + e,
@@ -2894,7 +2960,7 @@ fn draw_num(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], tint: [f32; 4], text: &str) 
                 rot: 0.0,
             });
         }
-        x += 14.0;
+        x += 14.0 * scale;
     }
 }
 
