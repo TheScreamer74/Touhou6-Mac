@@ -2573,23 +2573,6 @@ impl Stage {
             draw_text(&mut cmds, [x, y], 14.0, [1.0, 0.94, 0.94, 1.0], &self.spell_name);
         }
 
-        // Capture / failure result flash.
-        if self.spell_result > 0 {
-            let (text, tint) = if self.spell_captured {
-                ("Spell Card Captured!", [0.6, 1.0, 0.6, 1.0])
-            } else {
-                ("Spell Card Bonus Failed", [1.0, 0.6, 0.6, 1.0])
-            };
-            let w = text.len() as f32 * 14.0 * 0.75;
-            draw_text(
-                &mut cmds,
-                [FIELD_X + FIELD_W / 2.0 - w / 2.0, FIELD_Y + FIELD_H / 2.0],
-                14.0,
-                tint,
-                text,
-            );
-        }
-
         // Dialogue box.
         if self.dialogue.active && (!self.dialogue.lines[0].is_empty() || !self.dialogue.lines[1].is_empty()) {
             // Portraits: player (Reimu) lower-left, boss (Rumia) lower-right,
