@@ -64,6 +64,22 @@ impl Hud {
         Some((rect, r.pos, r.scale, r.alpha))
     }
 
+    /// Draw front.anm script `id`'s current sprite, top-left anchored at
+    /// (x, y), its width scaled by `scale_x` (1.0 = native). For the
+    /// game-positioned HUD tiles/plates/stars (`Gui::DrawGameScene`).
+    pub fn draw_sprite(&self, cmds: &mut Vec<DrawCmd>, id: u32, x: f32, y: f32, scale_x: f32) {
+        if let Some(([sx, sy, sw, sh], _, scale, alpha)) = self.script_state(id) {
+            let ts = self.tex_size;
+            cmds.push(DrawCmd {
+                tex: self.tex_slot,
+                dst: [x, y, sw * scale_x, sh * scale[1]],
+                src: [sx / ts, sy / ts, (sx + sw) / ts, (sy + sh) / ts],
+                tint: [1.0, 1.0, 1.0, alpha],
+                rot: 0.0,
+            });
+        }
+    }
+
     /// Emit the self-placing HUD sprites (labels + intro emblems). Elements the
     /// game positions each frame (stars, digits) are skipped here.
     pub fn draw(&self, cmds: &mut Vec<DrawCmd>) {

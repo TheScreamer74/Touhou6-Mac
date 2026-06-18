@@ -103,9 +103,6 @@ const BOMB_GLOW: SpriteRef = spr(TEX_PLAYER, 1.0, 97.0, 62.0, 62.0);
 /// player00 sprite 66: the focus hitbox marker.
 const HITBOX_MARKER: SpriteRef = spr(TEX_PLAYER, 160.0, 0.0, 16.0, 16.0);
 
-const HUD_STAR_RED: SpriteRef = spr(TEX_FRONT, 32.0, 240.0, 16.0, 16.0);
-const HUD_STAR_GREEN: SpriteRef = spr(TEX_FRONT, 48.0, 240.0, 16.0, 16.0);
-
 struct Shot {
     pos: [f32; 2],
     vel: [f32; 2],
@@ -2703,39 +2700,79 @@ impl Stage {
     }
 
     fn draw_hud(&self, cmds: &mut Vec<DrawCmd>) {
-        let border = [0.12, 0.05, 0.08, 1.0];
-        cmds.push(rect([0.0, 0.0, 640.0, FIELD_Y], border));
-        cmds.push(rect([0.0, FIELD_Y + FIELD_H, 640.0, 480.0 - FIELD_Y - FIELD_H], border));
-        cmds.push(rect([0.0, 0.0, FIELD_X, 480.0], border));
-        cmds.push(rect([FIELD_X + FIELD_W, 0.0, 640.0 - FIELD_X - FIELD_W, 480.0], border));
+        let val = [1.0, 1.0, 1.0, 1.0];
+        let vx = 496.0; // value column (Gui.cpp)
 
-        // Persistent HUD graphics (labels + intro emblems) from front.anm,
-        // placed in the original Gui screen coordinates.
+        // Border frame from front.anm tiles (Gui.cpp:1046-1074): vms[6] left
+        // column + right block, vms[7] top row, vms[8] bottom row.
+        let mut y = 0.0;
+        while y < 464.0 {
+            self.hud.draw_sprite(cmds, 6, 0.0, y, 1.0);
+            y += 32.0;
+        }
+        let mut x = 416.0;
+        while x < 624.0 {
+            let mut y = 0.0;
+            while y < 464.0 {
+                self.hud.draw_sprite(cmds, 6, x, y, 1.0);
+                y += 32.0;
+            }
+            x += 32.0;
+        }
+        let mut x = 32.0;
+        while x < 416.0 {
+            self.hud.draw_sprite(cmds, 7, x, 0.0, 1.0);
+            self.hud.draw_sprite(cmds, 8, x, 464.0, 1.0);
+            x += 32.0;
+        }
+
+        // Self-placed front.anm labels (vms[9-15]) + rotating emblems (vms[0-5]).
         self.hud.draw(cmds);
 
-        // Dynamic values drawn over the front.anm labels. (Phase 2 will move
-        // these onto the original number font / rolling score.)
-        let vx = 496.0; // value column (Gui.cpp)
-        let val = [1.0, 1.0, 1.0, 1.0];
+        // Value-row plates (vms[22]) behind each value (Gui.cpp:1096-1130).
+        for &py in &[58.0, 82.0, 122.0, 146.0, 186.0, 206.0, 226.0] {
+            self.hud.draw_sprite(cmds, 22, vx, py, 1.0);
+        }
+        self.hud.draw_sprite(cmds, 22, 488.0, 464.0, 1.0);
+        self.hud.draw_sprite(cmds, 22, 0.0, 464.0, 1.0);
 
-        draw_text(cmds, [vx, 58.0], 14.0, val, &format!("{:09}", self.hiscore.max(self.gui_score)));
-        draw_text(cmds, [vx, 82.0], 14.0, val, &format!("{:09}", self.gui_score));
+        // HiScore (y58) and rolling Score (y82), "%.9d" (Gui.cpp:1205-1208).
+        draw_num(cmds, [vx, 58.0], val, &format!("{:09}", self.hiscore));
+        draw_num(cmds, [vx, 82.0], val, &format!("{:09}", self.gui_score));
 
+        // Lives (vms[16]) / bombs (vms[17]) stars, x=496 + idx*16.
         for i in 0..self.lives.max(0) {
-            cmds.push(hud_sprite(HUD_STAR_RED, [vx + i as f32 * 16.0, 122.0]));
+            self.hud.draw_sprite(cmds, 16, vx + i as f32 * 16.0, 122.0, 1.0);
         }
         for i in 0..self.bombs.max(0) {
-            cmds.push(hud_sprite(HUD_STAR_GREEN, [vx + i as f32 * 16.0, 146.0]));
+            self.hud.draw_sprite(cmds, 17, vx + i as f32 * 16.0, 146.0, 1.0);
         }
 
-        if self.world.power >= 128 {
-            draw_text(cmds, [vx, 184.0], 13.0, [1.0, 1.0, 0.5, 1.0], "MAX");
+        // Power bar: a gradient quad width = currentPower px (Gui.cpp:1152-1198),
+        // 0xe0e0e0 -> 0x80e0e0. DrawCmd is single-tint, so approximate the
+        // gradient with vertical slices. Then the MAX sprite (vms[18]) at full,
+        // else the numeric value, both at (496,186).
+        let power = self.world.power.max(0);
+        if power > 0 {
+            let slices = 16;
+            for s in 0..slices {
+                let f0 = s as f32 / slices as f32;
+                let f1 = (s + 1) as f32 / slices as f32;
+                let g = 0.878 + (0.502 - 0.878) * (f0 + f1) / 2.0; // green/red ch e0->80
+                let x0 = vx + power as f32 * f0;
+                let w = power as f32 * (f1 - f0);
+                cmds.push(rect([x0, 186.0, w, 16.0], [g, 0.878, 0.878, 1.0]));
+            }
+        }
+        if power >= 128 {
+            self.hud.draw_sprite(cmds, 18, vx, 186.0, 1.0);
         } else {
-            draw_text(cmds, [vx, 184.0], 13.0, val, &format!("{}", self.world.power));
+            draw_num(cmds, [vx, 186.0], val, &format!("{power}"));
         }
 
-        draw_text(cmds, [vx, 206.0], 13.0, val, &format!("{}", self.graze));
-        draw_text(cmds, [vx, 226.0], 13.0, val, &format!("{}", self.point_items));
+        // Graze (y206) and point items (y226), "%d".
+        draw_num(cmds, [vx, 206.0], val, &format!("{}", self.graze));
+        draw_num(cmds, [vx, 226.0], val, &format!("{}", self.point_items));
 
         // "Full Power Mode!!" popup at max power (Gui::ShowFullPowerMode).
         if self.full_power_timer > 0 {
@@ -2834,6 +2871,33 @@ fn stage_clear_bonus(
     s - s % 10
 }
 
+/// Draw HUD numbers/text with the original AsciiManager metrics: a 15px glyph
+/// advancing 14px per character (`charWidth = 14 * scale.x`, AsciiManager.cpp).
+fn draw_num(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], tint: [f32; 4], text: &str) {
+    let mut x = pos[0];
+    for ch in text.chars() {
+        let c = ch as u32;
+        if (0x21..=0x7e).contains(&c) {
+            let idx = c - 0x20;
+            let (col, row) = ((idx % 16) as f32, (idx / 16 + 2) as f32);
+            let e = 0.5 / 256.0;
+            cmds.push(DrawCmd {
+                tex: TEX_ASCII,
+                dst: [x.round(), pos[1].round(), 15.0, 15.0],
+                src: [
+                    col * 16.0 / 256.0 + e,
+                    row * 16.0 / 256.0 + e,
+                    (col + 1.0) * 16.0 / 256.0 - e,
+                    (row + 1.0) * 16.0 / 256.0 - e,
+                ],
+                tint,
+                rot: 0.0,
+            });
+        }
+        x += 14.0;
+    }
+}
+
 /// Draw ASCII text using the 16x16 glyph grid in ascii.png.
 pub fn draw_text(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], size: f32, tint: [f32; 4], text: &str) {
     let mut x = pos[0];
@@ -2879,13 +2943,3 @@ fn sprite_at(s: SpriteRef, field_pos: [f32; 2], alpha: f32) -> DrawCmd {
     }
 }
 
-fn hud_sprite(s: SpriteRef, screen_pos: [f32; 2]) -> DrawCmd {
-    let [x, y, w, h] = s.rect;
-    DrawCmd {
-        tex: s.tex,
-        dst: [screen_pos[0], screen_pos[1], w, h],
-        src: [x / 256.0, y / 256.0, (x + w) / 256.0, (y + h) / 256.0],
-        tint: [1.0, 1.0, 1.0, 1.0],
-        rot: 0.0,
-    }
-}
