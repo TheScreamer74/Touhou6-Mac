@@ -33,6 +33,8 @@ pub struct AnmRunner {
     pub pos: [f32; 2],
     pub alpha: f32,
     pub scale: [f32; 2],
+    /// Per-frame scale velocity (opcode 11 SetScaleSpeed), added to `scale`.
+    scale_vel: [f32; 2],
     /// Z rotation in radians (opcode 9), integrated by `angle_vel` (opcode 10).
     pub rotation: f32,
     angle_vel: f32,
@@ -60,6 +62,7 @@ impl AnmRunner {
             pos: [0.0, 0.0],
             alpha: 1.0,
             scale: [1.0, 1.0],
+            scale_vel: [0.0, 0.0],
             rotation: 0.0,
             angle_vel: 0.0,
             fade: None,
@@ -100,6 +103,8 @@ impl AnmRunner {
         self.clock = self.clock.saturating_add(1);
         self.exec_ready();
         self.rotation += self.angle_vel;
+        self.scale[0] += self.scale_vel[0];
+        self.scale[1] += self.scale_vel[1];
         if let Some((from, to, start, dur)) = self.fade {
             let t = self.clock.saturating_sub(start);
             if t >= dur {
@@ -151,6 +156,7 @@ impl AnmRunner {
                 }
                 1 => self.sprite = Some(i.arg_u32(0)),
                 2 => self.scale = [i.arg_f32(0), i.arg_f32(1)],
+                11 => self.scale_vel = [i.arg_f32(0), i.arg_f32(1)],
                 3 => self.alpha = i.arg_u32(0) as f32 / 255.0,
                 5 => {
                     // Jump: arg is a byte offset from script start; the

@@ -719,6 +719,10 @@ pub struct Stage {
     /// for the capture bonus; the "Spell Card Bonus!" popup (frames, amount).
     spell_id: i32,
     spell_secs: i32,
+    /// text.anm script 7 (TEXT_ENEMY_SPELLCARD_NAME) + the live runner that
+    /// drives the spell-name announce animation (fly-in, shrink, fly-up/off).
+    spell_name_script: Vec<AnmInstr>,
+    spell_name_runner: Option<AnmRunner>,
     spell_bonus_timer: u32,
     spell_bonus_amount: i64,
     /// "BONUS" popup (bullet-cancel total) — frames remaining, amount.
@@ -743,7 +747,7 @@ pub struct Stage {
 }
 
 impl Stage {
-    pub fn new(ecl: Ecl, enemy_scripts: HashMap<i32, ScriptRef>, etama: &Entry, player: &Entry, player_tex: usize, character: Character, msg: Msg, background: Option<Background>, hud: Hud, cfg: StageConfig) -> Self {
+    pub fn new(ecl: Ecl, enemy_scripts: HashMap<i32, ScriptRef>, etama: &Entry, player: &Entry, player_tex: usize, character: Character, msg: Msg, background: Option<Background>, hud: Hud, cfg: StageConfig, spell_name_script: Vec<AnmInstr>) -> Self {
         let timeline_off = ecl.timeline_offset;
         let player_scripts: HashMap<i32, Vec<AnmInstr>> =
             player.scripts.iter().map(|(id, instrs)| (*id as i32, instrs.clone())).collect();
@@ -819,6 +823,8 @@ impl Stage {
             spell_name: String::new(),
             spell_id: 0,
             spell_secs: 0,
+            spell_name_script,
+            spell_name_runner: None,
             spell_bonus_timer: 0,
             spell_bonus_amount: 0,
             bonus_score_timer: 0,
@@ -956,6 +962,12 @@ impl Stage {
         }
         self.spell_bonus_timer = self.spell_bonus_timer.saturating_sub(1);
         self.bonus_score_timer = self.bonus_score_timer.saturating_sub(1);
+        if let Some(r) = &mut self.spell_name_runner {
+            r.tick();
+            if !r.visible() {
+                self.spell_name_runner = None;
+            }
+        }
 
         // Player state machine.
         let mut respawn = false;
@@ -2201,6 +2213,8 @@ impl Stage {
                     self.spell_name = spellcard_name(id).to_string();
                     self.spell_id = id;
                     self.spell_capturing = true;
+                    // Start the name announce animation (text.anm script 7).
+                    self.spell_name_runner = Some(AnmRunner::new(self.spell_name_script.clone()));
                     // SPELLCARDSTART cancels the prior pattern into point items.
                     self.bullets_to_points();
                     self.events.push(Event::Sfx("cat00"));
@@ -2212,6 +2226,10 @@ impl Stage {
                         self.spell_captured = self.spell_capturing;
                     }
                     self.spell_active = false;
+                    // Fly the name banner off (interrupt label 1, text.anm:130).
+                    if let Some(r) = &mut self.spell_name_runner {
+                        r.interrupt(1);
+                    }
                     // Any spellcard end despawns the field for the bullet-cancel
                     // bonus + BONUS popup (EclManager.cpp:755 DespawnBullets).
                     self.despawn_bullets(true);
@@ -2589,30 +2607,35 @@ impl Stage {
             draw_text(&mut cmds, [FIELD_X + FIELD_W - 28.0, FIELD_Y + 8.0], 16.0, tint, &format!("{secs:02}"));
         }
 
-        // Spellcard name centred near the top on a blue bar (the decomp's
-        // enemySpellcardBackground + enemySpellcardName).
-        if self.spell_active && !self.spell_name.is_empty() {
-            let w = self.spell_name.chars().count() as f32 * 14.0 * 0.75;
-            // Centred, but kept right of the "Enemy" label + spell count.
-            let x = (FIELD_X + (FIELD_W - w) / 2.0).max(FIELD_X + 112.0);
-            let y = FIELD_Y + 22.0;
-            // Real blue bar: front.anm script 24 (enemySpellcardBackground),
-            // width = strlen*15/2 + 16 (Gui.cpp:236,1317-1320), centred on name.
-            if let Some(([sx, sy, sw, sh], _, scale, _)) = self.hud.script_state(24) {
-                let bar = self.spell_name.chars().count() as f32 * 15.0 / 2.0 + 16.0;
-                let ts = self.hud.tex_size();
-                let bh = sh * scale[1];
-                cmds.push(DrawCmd {
-                    tex: self.hud.tex(),
-                    // The bg sprite is shown on demand by ShowSpellcard in the
-                    // original; drive it fully opaque while the spell is active.
-                    dst: [x + w / 2.0 - bar / 2.0, y + 7.0 - bh / 2.0, bar, bh],
-                    src: [sx / ts, sy / ts, (sx + sw) / ts, (sy + sh) / ts],
-                    tint: [1.0, 1.0, 1.0, 1.0],
-                    rot: 0.0,
-                });
+        // Spellcard name announce: driven by text.anm script 7's VM (fly-in at
+        // (256,312) scale 3 -> shrink to 1 -> fly to (256,40) -> off). The name
+        // sprite is centre-anchored at the VM pos; the blue bar (front.anm
+        // script 24, enemySpellcardBackground) follows it, width strlen*15/2+16.
+        if let Some(r) = &self.spell_name_runner {
+            if r.visible() && !self.spell_name.is_empty() {
+                let scale = r.scale[0].max(0.01);
+                let bar_len = self.spell_name.chars().count() as f32 * 15.0 / 2.0 + 16.0;
+                if let Some(([sx, sy, sw, sh], _, bscale, _)) = self.hud.script_state(24) {
+                    let ts = self.hud.tex_size();
+                    let bh = sh * bscale[1];
+                    cmds.push(DrawCmd {
+                        tex: self.hud.tex(),
+                        dst: [r.pos[0] - bar_len / 2.0, r.pos[1] - bh / 2.0, bar_len, bh],
+                        src: [sx / ts, sy / ts, (sx + sw) / ts, (sy + sh) / ts],
+                        tint: [1.0, 1.0, 1.0, r.alpha],
+                        rot: 0.0,
+                    });
+                }
+                // Name text: 15px glyphs scaled by the VM, centred at the VM pos.
+                let w = self.spell_name.chars().count() as f32 * 14.0 * scale;
+                draw_num_scaled(
+                    &mut cmds,
+                    [r.pos[0] - w / 2.0, r.pos[1] - 7.5 * scale],
+                    scale,
+                    [1.0, 0.94, 0.94, r.alpha],
+                    &self.spell_name,
+                );
             }
-            draw_text(&mut cmds, [x, y], 14.0, [1.0, 0.94, 0.94, 1.0], &self.spell_name);
         }
 
         // Dialogue box.

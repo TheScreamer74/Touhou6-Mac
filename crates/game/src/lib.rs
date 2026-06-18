@@ -96,6 +96,7 @@ struct Assets {
     player_marisa_tex: usize,
     etama: Anm0,
     front: Anm0,
+    text: Anm0,
     stages: Vec<StageData>,
 }
 
@@ -124,9 +125,16 @@ impl Assets {
             stage_num: idx as i32 + 1,
         };
         let hud = crate::hud::Hud::new(&self.front.entries[0], stage::TEX_FRONT);
+        // text.anm script 7 = TEXT_ENEMY_SPELLCARD_NAME (the announce animation).
+        let spell_name_script = self.text.entries[0]
+            .scripts
+            .iter()
+            .find(|(id, _)| *id == 7)
+            .map(|(_, i)| i.clone())
+            .unwrap_or_default();
         Stage::new(
             ecl, scripts, &self.etama.entries[0], player_anm, player_tex, character, msg,
-            background, hud, cfg,
+            background, hud, cfg, spell_name_script,
         )
     }
 }
@@ -307,6 +315,7 @@ pub fn build_game(engine: &Engine, files: &GameFiles, with_audio: bool) -> (Vec<
         player_marisa_tex,
         etama: Anm0::parse(&files.cm["etama3.anm"]).expect("parse etama3"),
         front: Anm0::parse(&files.cm["front.anm"]).expect("parse front"),
+        text: Anm0::parse(&files.inn["text.anm"]).expect("parse text"),
         stages,
     };
 
