@@ -2514,7 +2514,22 @@ impl Stage {
             // Centred, but kept right of the "Enemy" label + spell count.
             let x = (FIELD_X + (FIELD_W - w) / 2.0).max(FIELD_X + 112.0);
             let y = FIELD_Y + 22.0;
-            cmds.push(rect([x - 10.0, y - 2.0, w + 20.0, 18.0], [0.15, 0.2, 0.55, 0.6]));
+            // Real blue bar: front.anm script 24 (enemySpellcardBackground),
+            // width = strlen*15/2 + 16 (Gui.cpp:236,1317-1320), centred on name.
+            if let Some(([sx, sy, sw, sh], _, scale, _)) = self.hud.script_state(24) {
+                let bar = self.spell_name.chars().count() as f32 * 15.0 / 2.0 + 16.0;
+                let ts = self.hud.tex_size();
+                let bh = sh * scale[1];
+                cmds.push(DrawCmd {
+                    tex: self.hud.tex(),
+                    // The bg sprite is shown on demand by ShowSpellcard in the
+                    // original; drive it fully opaque while the spell is active.
+                    dst: [x + w / 2.0 - bar / 2.0, y + 7.0 - bh / 2.0, bar, bh],
+                    src: [sx / ts, sy / ts, (sx + sw) / ts, (sy + sh) / ts],
+                    tint: [1.0, 1.0, 1.0, 1.0],
+                    rot: 0.0,
+                });
+            }
             draw_text(&mut cmds, [x, y], 14.0, [1.0, 0.94, 0.94, 1.0], &self.spell_name);
         }
 
