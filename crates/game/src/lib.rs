@@ -6,6 +6,7 @@
 pub mod anm_vm;
 pub mod background;
 pub mod ecl_vm;
+pub mod hud;
 pub mod stage;
 pub mod title;
 
@@ -94,6 +95,9 @@ struct Assets {
     player_marisa: Anm0,
     player_marisa_tex: usize,
     etama: Anm0,
+    front: Anm0,
+    text: Anm0,
+    face_chara: Anm0,
     stages: Vec<StageData>,
 }
 
@@ -119,10 +123,26 @@ impl Assets {
             face_boss_tex: sd.boss_face_tex,
             stage_bgm: STAGE_BGM[idx],
             boss_bgm: BOSS_BGM[idx],
+            stage_num: idx as i32 + 1,
         };
+        let hud = crate::hud::Hud::new(&self.front.entries[0], stage::TEX_FRONT);
+        // text.anm script 7 = TEXT_ENEMY_SPELLCARD_NAME (the announce animation).
+        let spell_name_script = self.text.entries[0]
+            .scripts
+            .iter()
+            .find(|(id, _)| *id == 7)
+            .map(|(_, i)| i.clone())
+            .unwrap_or_default();
+        // face*.anm script 3 = FACE_ENEMY_SPELLCARD_PORTRAIT (the slide-in).
+        let portrait_script = self.face_chara.entries[0]
+            .scripts
+            .iter()
+            .find(|(id, _)| *id == 3)
+            .map(|(_, i)| i.clone())
+            .unwrap_or_default();
         Stage::new(
             ecl, scripts, &self.etama.entries[0], player_anm, player_tex, character, msg,
-            background, cfg,
+            background, hud, cfg, spell_name_script, portrait_script,
         )
     }
 }
@@ -232,6 +252,10 @@ pub fn build_game(engine: &Engine, files: &GameFiles, with_audio: bool) -> (Vec<
     load_bg(&files.st, "stg1bg.png", Some("stg1bg_a.png"), &mut textures);
     // 12: Marisa player body sprite (player01).
     let player_marisa_tex = load(&files.cm, "player01.png", Some("player01_a.png"), &mut textures);
+    // 13: power-bar gradient, 2x1 (0xe0e0e0 -> 0x80e0e0) sampled linearly so the
+    // HUD power bar is the decomp's exact per-vertex gradient (Gui.cpp:1162-1163).
+    debug_assert_eq!(textures.len(), stage::TEX_POWER_GRAD);
+    textures.push(engine.create_texture(&[224, 224, 224, 255, 128, 224, 224, 255], 2, 1));
 
     // Per-stage sprite sheets + boss faces, appended after the fixed slots.
     let mut stages: Vec<StageData> = Vec::new();
@@ -298,6 +322,9 @@ pub fn build_game(engine: &Engine, files: &GameFiles, with_audio: bool) -> (Vec<
         player_marisa: Anm0::parse(&files.cm["player01.anm"]).expect("parse player01"),
         player_marisa_tex,
         etama: Anm0::parse(&files.cm["etama3.anm"]).expect("parse etama3"),
+        front: Anm0::parse(&files.cm["front.anm"]).expect("parse front"),
+        text: Anm0::parse(&files.inn["text.anm"]).expect("parse text"),
+        face_chara: Anm0::parse(&files.cm["face00a.anm"]).expect("parse face00a"),
         stages,
     };
 

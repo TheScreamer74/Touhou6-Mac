@@ -200,6 +200,8 @@ pub struct Enemy {
     pub anm_pose_state: u8,  // 0xff = unset, 0 = default, 1 = left, 2 = right
     pub anm_dirty: bool,
     pub boss_id: u8,
+    /// Boss remaining-attack count shown by the HUD (ECL BOSSSETLIFECOUNT).
+    pub spell_count: i32,
 }
 
 impl Default for Enemy {
@@ -265,6 +267,7 @@ impl Default for Enemy {
             anm_pose_state: 0xff,
             anm_dirty: false,
             boss_id: 0,
+            spell_count: 0,
         }
     }
 }
@@ -272,7 +275,7 @@ impl Default for Enemy {
 pub enum WorldEvent {
     Sfx(i32),
     /// Spell card declared: (spell id, raw Shift-JIS name bytes).
-    SpellcardStart(i32, Vec<u8>),
+    SpellcardStart(i32, i32, Vec<u8>),
     SpellcardEnd,
     BulletCancel,
     BossSet(bool),
@@ -976,13 +979,15 @@ impl Enemy {
             }
             134 => self.lasers = [None; 32], // LASERCLEARALL
             93 => {
-                // SPELLCARDSTART: id at byte 2, Shift-JIS name from byte 4.
+                // SPELLCARDSTART (EclRawInstrSpellcardStartArgs): portrait sprite
+                // at byte 0, id at byte 2, Shift-JIS name from byte 4.
+                let sprite = instr.arg_i16(0) as i32;
                 let id = instr.arg_i16(2) as i32;
                 let name = instr.args.get(4..).map(|b| {
                     let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
                     b[..end].to_vec()
                 }).unwrap_or_default();
-                world.events.push(WorldEvent::SpellcardStart(id, name));
+                world.events.push(WorldEvent::SpellcardStart(id, sprite, name));
                 world.events.push(WorldEvent::BulletCancel);
                 self.rank_speed_low = -0.5;
                 self.rank_speed_high = 0.5;
@@ -1171,7 +1176,7 @@ impl Enemy {
                     .push(WorldEvent::DropItem([self.pos[0], self.pos[1]], instr.arg_i32(0)));
             }
             125 => {} // STDUNPAUSE
-            126 => {} // BOSSSETLIFECOUNT (gui)
+            126 => self.spell_count = instr.arg_i32(0), // BOSSSETLIFECOUNT (gui)
             127 => {} // DEBUGWATCH
             128 | 129 => {} // ANMINTERRUPTMAIN / SLOT — anm interrupts pending
             op if std::env::var_os("TH06_TRACE_OP").is_some() => { eprintln!("unhandled ECL op {op}"); }

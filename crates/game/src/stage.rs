@@ -11,6 +11,7 @@ use th06_formats::ecl::Ecl;
 use th06_formats::msg::Msg;
 
 use crate::anm_vm::AnmRunner;
+use crate::hud::Hud;
 use crate::background::Background;
 use th06_engine::BgScene;
 use crate::ecl_vm::{Bullet, Enemy, Rng, SpawnReq, World, WorldEvent};
@@ -40,6 +41,8 @@ pub const TEX_WHITE: usize = 7;
 pub const TEX_ASCII: usize = 8;
 pub const TEX_FACE_REIMU: usize = 9; // face00a (Reimu player portrait)
 pub const TEX_FACE_MARISA: usize = 10; // face01a (Marisa player portrait)
+// 11 stg1bg, 12 player01.
+pub const TEX_POWER_GRAD: usize = 13; // 2x1 power-bar gradient
 
 /// Sound effects by SoundIdx (SoundPlayer.cpp g_SFXList order). Indexing this
 /// with the raw idx the ECL/bullet code passes gives the right cue — the
@@ -71,6 +74,8 @@ pub struct StageConfig {
     pub face_boss_tex: usize,
     pub stage_bgm: &'static str,
     pub boss_bgm: &'static str,
+    /// 1-based stage number (Gui currentStage), for the clear bonus + banner.
+    pub stage_num: i32,
 }
 
 /// Player progress carried from one stage to the next.
@@ -99,10 +104,6 @@ const AMULET: SpriteRef = spr(TEX_PLAYER, 129.0, 1.0, 14.0, 14.0);
 const BOMB_GLOW: SpriteRef = spr(TEX_PLAYER, 1.0, 97.0, 62.0, 62.0);
 /// player00 sprite 66: the focus hitbox marker.
 const HITBOX_MARKER: SpriteRef = spr(TEX_PLAYER, 160.0, 0.0, 16.0, 16.0);
-
-const HUD_LOGO: SpriteRef = spr(TEX_FRONT, 128.0, 128.0, 128.0, 128.0);
-const HUD_STAR_RED: SpriteRef = spr(TEX_FRONT, 32.0, 240.0, 16.0, 16.0);
-const HUD_STAR_GREEN: SpriteRef = spr(TEX_FRONT, 48.0, 240.0, 16.0, 16.0);
 
 struct Shot {
     pos: [f32; 2],
@@ -552,10 +553,20 @@ fn spellcard_name(id: i32) -> &'static str {
     match id {
         0 => "Moon Sign \"Moonlight Ray\"",
         1 => "Night Sign \"Night Bird\"",
-        2 => "Dark Sign \"Demarcation\"",
+        2 => "Darkness Sign \"Demarcation\"",
         _ => "Spell Card",
     }
 }
+
+/// Per-spellcard capture score, indexed by spellcard id (g_SpellcardScore,
+/// EclManager.cpp:18). The capture bonus is `score * (1 + secondsLeft/10)`.
+const SPELLCARD_SCORE: [i64; 64] = [
+    200000, 200000, 200000, 200000, 200000, 200000, 200000, 250000, 250000, 250000, 250000, 250000, 250000,
+    250000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000,
+    300000, 300000, 300000, 300000, 300000, 300000, 400000, 400000, 400000, 400000, 400000, 400000, 400000,
+    400000, 500000, 500000, 500000, 500000, 500000, 500000, 600000, 600000, 600000, 600000, 600000, 700000,
+    700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000, 700000,
+];
 
 /// Item drop pattern for ITEM_RANDOM_ITEM enemies (g_RandomItems).
 const RANDOM_ITEMS: [i32; 32] = [
@@ -682,6 +693,15 @@ pub struct Stage {
     items: Vec<Item>,
     particles: Vec<Particle>,
     score: i64,
+    /// Displayed score, rolled toward `score` each frame (Gui guiScore).
+    gui_score: i64,
+    next_score_inc: i64,
+    /// "Full Power Mode!!" popup: frames remaining + edge-tracking of max power.
+    full_power_timer: u32,
+    was_full: bool,
+    /// Eased boss health bar (Gui bossHealthBar2): rises 0.01/frame toward the
+    /// boss life fraction, falls 0.02/frame.
+    boss_bar: f32,
     hiscore: i64,
     clear_bonus: i64,
     /// Running count for scoring power items collected at max power.
@@ -695,6 +715,23 @@ pub struct Stage {
     spell_capturing: bool,
     spell_result: u32,
     spell_captured: bool,
+    /// Current spellcard id (g_SpellcardScore index) and last-seen seconds left,
+    /// for the capture bonus; the "Spell Card Bonus!" popup (frames, amount).
+    spell_id: i32,
+    spell_secs: i32,
+    /// text.anm script 7 (TEXT_ENEMY_SPELLCARD_NAME) + the live runner that
+    /// drives the spell-name announce animation (fly-in, shrink, fly-up/off).
+    spell_name_script: Vec<AnmInstr>,
+    spell_name_runner: Option<AnmRunner>,
+    /// Boss spellcard portrait (face*.anm script 3) + which boss-face sprite.
+    portrait_script: Vec<AnmInstr>,
+    portrait_runner: Option<AnmRunner>,
+    spell_portrait_sprite: i32,
+    spell_bonus_timer: u32,
+    spell_bonus_amount: i64,
+    /// "BONUS" popup (bullet-cancel total) — frames remaining, amount.
+    bonus_score_timer: u32,
+    bonus_score_amount: i64,
     boss_bgm_started: bool,
     /// Dialogue portrait texture slots (player left / boss right).
     face_player_tex: usize,
@@ -702,14 +739,19 @@ pub struct Stage {
     /// Music tracks for this stage (field theme / boss theme).
     stage_bgm: &'static str,
     boss_bgm: &'static str,
+    /// 1-based stage number + the cumulative graze at stage start, for the
+    /// clear bonus (Gui currentStage / grazeInStage).
+    stage_num: i32,
+    graze_start: i64,
     msg: Msg,
     dialogue: Dialogue,
     background: Option<Background>,
+    hud: Hud,
     pub events: Vec<Event>,
 }
 
 impl Stage {
-    pub fn new(ecl: Ecl, enemy_scripts: HashMap<i32, ScriptRef>, etama: &Entry, player: &Entry, player_tex: usize, character: Character, msg: Msg, background: Option<Background>, cfg: StageConfig) -> Self {
+    pub fn new(ecl: Ecl, enemy_scripts: HashMap<i32, ScriptRef>, etama: &Entry, player: &Entry, player_tex: usize, character: Character, msg: Msg, background: Option<Background>, hud: Hud, cfg: StageConfig, spell_name_script: Vec<AnmInstr>, portrait_script: Vec<AnmInstr>) -> Self {
         let timeline_off = ecl.timeline_offset;
         let player_scripts: HashMap<i32, Vec<AnmInstr>> =
             player.scripts.iter().map(|(id, instrs)| (*id as i32, instrs.clone())).collect();
@@ -769,6 +811,11 @@ impl Stage {
             items: Vec::new(),
             particles: Vec::new(),
             score: 0,
+            gui_score: 0,
+            next_score_inc: 0,
+            full_power_timer: 0,
+            was_full: false,
+            boss_bar: 0.0,
             hiscore: 0,
             clear_bonus: 0,
             power_item_count: 0,
@@ -778,6 +825,17 @@ impl Stage {
             rand_item_spawn: 0,
             spell_active: false,
             spell_name: String::new(),
+            spell_id: 0,
+            spell_secs: 0,
+            spell_name_script,
+            spell_name_runner: None,
+            portrait_script,
+            portrait_runner: None,
+            spell_portrait_sprite: 0,
+            spell_bonus_timer: 0,
+            spell_bonus_amount: 0,
+            bonus_score_timer: 0,
+            bonus_score_amount: 0,
             spell_capturing: false,
             spell_result: 0,
             spell_captured: false,
@@ -786,9 +844,12 @@ impl Stage {
             face_boss_tex: cfg.face_boss_tex,
             stage_bgm: cfg.stage_bgm,
             boss_bgm: cfg.boss_bgm,
+            stage_num: cfg.stage_num,
+            graze_start: 0,
             msg,
             dialogue: Dialogue::default(),
             background,
+            hud,
             events: vec![Event::Bgm(cfg.stage_bgm)],
         }
     }
@@ -813,11 +874,14 @@ impl Stage {
         self.score = c.score;
         self.graze = c.graze;
         self.power_item_count = c.power_item_count;
+        // grazeInStage counts from the stage start (Gui clear bonus).
+        self.graze_start = c.graze;
     }
 
     pub fn set_lives(&mut self, lives: i32) {
         self.lives = lives;
     }
+
 
     /// Debug: seed starting power / score.
     pub fn set_power(&mut self, power: i32) {
@@ -883,6 +947,39 @@ impl Stage {
         self.anim += 1;
         if let Some(bg) = &mut self.background {
             bg.tick();
+        }
+        self.hud.tick();
+        self.roll_gui_score();
+        // "Full Power Mode!!" popup when power first reaches max.
+        let full = self.world.power >= 128;
+        if full && !self.was_full {
+            self.full_power_timer = 180;
+        }
+        self.was_full = full;
+        self.full_power_timer = self.full_power_timer.saturating_sub(1);
+        self.roll_boss_bar();
+        // Track the boss spell timer (for the capture bonus) and tick popups.
+        if let Some(secs) = self
+            .enemies
+            .iter()
+            .find(|e| e.is_boss && e.occupied)
+            .and_then(|e| e.spell_seconds_left())
+        {
+            self.spell_secs = secs;
+        }
+        self.spell_bonus_timer = self.spell_bonus_timer.saturating_sub(1);
+        self.bonus_score_timer = self.bonus_score_timer.saturating_sub(1);
+        if let Some(r) = &mut self.spell_name_runner {
+            r.tick();
+            if !r.visible() {
+                self.spell_name_runner = None;
+            }
+        }
+        if let Some(r) = &mut self.portrait_runner {
+            r.tick();
+            if !r.visible() {
+                self.portrait_runner = None;
+            }
         }
 
         // Player state machine.
@@ -952,8 +1049,15 @@ impl Stage {
             && self.enemies.is_empty()
             && !self.world.boss_present
         {
-            // Clear bonus + persist the score (capped graze/lives bonus).
-            let bonus = self.lives.max(0) as i64 * 1_000_000 + self.bombs.max(0) as i64 * 300_000;
+            let bonus = stage_clear_bonus(
+                self.stage_num,
+                (self.graze - self.graze_start).max(0),
+                self.world.power as i64,
+                self.point_items,
+                self.lives.max(0) as i64,
+                self.bombs.max(0) as i64,
+                self.world.difficulty,
+            );
             self.score += bonus;
             self.clear_bonus = bonus;
             if self.score > self.hiscore {
@@ -1708,17 +1812,25 @@ impl Stage {
         // Enemy deaths award the enemy's score value (default 100).
         let mut drops: Vec<([f32; 2], i16)> = Vec::new();
         let mut death_fx: Vec<[f32; 2]> = Vec::new();
+        let mut boss_died = false;
         for i in 0..self.enemies.len() {
             let e = &mut self.enemies[i];
             if e.occupied && e.interactable && e.life <= 0 {
                 drops.push(([e.pos[0], e.pos[1]], e.item_drop));
                 if !e.is_boss {
                     death_fx.push([e.pos[0], e.pos[1]]);
+                } else {
+                    boss_died = true;
                 }
                 self.score += e.score as i64;
                 e.on_death(&self.ecl, &mut self.world);
                 self.events.push(Event::Sfx("enep00"));
             }
+        }
+        // A boss death cancels the field for the bonus (EnemyManager.cpp:693
+        // DespawnBullets(12800, false)) — bonus only, no point items.
+        if boss_died {
+            self.despawn_bullets(false);
         }
         for pos in death_fx {
             // Bright flash ring + a puff, like the original enemy pop.
@@ -2071,6 +2183,35 @@ impl Stage {
         self.cancel_lasers();
     }
 
+    /// BulletManager::DespawnBullets: cancel every bullet/laser, awarding an
+    /// escalating bonus (2000, +10 each, capped at 12800), optionally as point
+    /// items, then add it to the score and show the "BONUS" popup.
+    fn despawn_bullets(&mut self, award_points: bool) {
+        const MAX_BONUS: i64 = 12800;
+        let positions: Vec<[f32; 2]> = self.world.bullets.iter().map(|b| b.pos).collect();
+        let laser_count = self.world.lasers.iter().filter(|l| l.in_use && l.state < 2).count();
+        let mut bullet_score = 2000i64;
+        let mut total = 0i64;
+        for pos in &positions {
+            if award_points {
+                self.items.push(Item::homing(*pos, 6));
+            }
+            total += bullet_score;
+            bullet_score = (bullet_score + 10).min(MAX_BONUS);
+        }
+        for _ in 0..laser_count {
+            total += bullet_score;
+            bullet_score = (bullet_score + 10).min(MAX_BONUS);
+        }
+        self.world.bullets.clear();
+        self.cancel_lasers();
+        self.score += total;
+        if total != 0 {
+            self.bonus_score_amount = total;
+            self.bonus_score_timer = 250;
+        }
+    }
+
     fn drain_world_events(&mut self) {
         let events: Vec<WorldEvent> = self.world.events.drain(..).collect();
         for ev in events {
@@ -2080,10 +2221,15 @@ impl Stage {
                     let name = SFX_BY_IDX.get(idx as usize).copied().unwrap_or("tan00");
                     self.events.push(Event::Sfx(name));
                 }
-                WorldEvent::SpellcardStart(id, _raw) => {
+                WorldEvent::SpellcardStart(id, sprite, _raw) => {
                     self.spell_active = true;
                     self.spell_name = spellcard_name(id).to_string();
+                    self.spell_id = id;
+                    self.spell_portrait_sprite = sprite;
                     self.spell_capturing = true;
+                    // Start the name announce + portrait slide-in (ShowSpellcard).
+                    self.spell_name_runner = Some(AnmRunner::new(self.spell_name_script.clone()));
+                    self.portrait_runner = Some(AnmRunner::new(self.portrait_script.clone()));
                     // SPELLCARDSTART cancels the prior pattern into point items.
                     self.bullets_to_points();
                     self.events.push(Event::Sfx("cat00"));
@@ -2095,12 +2241,24 @@ impl Stage {
                         self.spell_captured = self.spell_capturing;
                     }
                     self.spell_active = false;
-                    // A captured card (SPELLCARDEND, isActive==1) rewards the
-                    // remaining bullets as point items; a timeout just clears.
+                    // Fly the name banner off (interrupt label 1, text.anm:130).
+                    if let Some(r) = &mut self.spell_name_runner {
+                        r.interrupt(1);
+                    }
+                    // Any spellcard end despawns the field for the bullet-cancel
+                    // bonus + BONUS popup (EclManager.cpp:755 DespawnBullets).
+                    self.despawn_bullets(true);
+                    // A captured card additionally awards score*(1 + secs/10)
+                    // (EclManager.cpp:759-766) with the "Spell Card Bonus!" popup.
                     if captured {
-                        self.bullets_to_points();
-                    } else {
-                        self.world.bullets.clear();
+                        let base = SPELLCARD_SCORE
+                            .get(self.spell_id.max(0) as usize)
+                            .copied()
+                            .unwrap_or(0);
+                        let bonus = base + base * self.spell_secs.max(0) as i64 / 10;
+                        self.score += bonus;
+                        self.spell_bonus_amount = bonus;
+                        self.spell_bonus_timer = 280;
                     }
                 }
                 WorldEvent::BulletCancel => {
@@ -2209,14 +2367,8 @@ impl Stage {
             });
         }
 
-        // Boss HP bar.
-        if let Some(boss) = self.enemies.iter().find(|e| e.is_boss && e.occupied) {
-            let frac = (boss.life.max(0) as f32 / boss.max_life.max(1) as f32).clamp(0.0, 1.0);
-            cmds.push(rect(
-                [FIELD_X + 8.0, FIELD_Y + 4.0, (FIELD_W - 16.0) * frac, 4.0],
-                [0.9, 0.15, 0.15, 0.9],
-            ));
-        }
+        // (Boss health bar / timer / spell name are drawn in draw_hud, over the
+        // field, from front.anm sprites — Gui::DrawGameScene.)
 
         // Items (etama3 sprites 0..6, index = item kind). Point-bullet items
         // (kind 6) fall back to the point-item sprite if the sheet lacks one.
@@ -2449,57 +2601,79 @@ impl Stage {
             });
         }
 
-        // Boss attack timer (top center of the field).
+        // Boss attack timer at the field top-right, "%.2d" coloured by seconds
+        // left (Gui.cpp:1007-1037, COLOR1-4).
         if let Some(secs) = self
             .enemies
             .iter()
             .find(|e| e.is_boss && e.occupied)
             .and_then(|e| e.spell_seconds_left())
         {
-            draw_text(
-                &mut cmds,
-                [FIELD_X + FIELD_W / 2.0 - 16.0, FIELD_Y + 12.0],
-                16.0,
-                [1.0, 1.0, 1.0, 0.9],
-                &format!("{secs:02}"),
-            );
-        }
-
-        // Spellcard name banner (right-aligned near the top of the field).
-        if self.spell_active && !self.spell_name.is_empty() {
-            let w = self.spell_name.len() as f32 * 14.0 * 0.75;
-            draw_text(
-                &mut cmds,
-                [FIELD_X + FIELD_W - w - 8.0, FIELD_Y + 30.0],
-                14.0,
-                [1.0, 0.85, 0.9, 0.95],
-                &self.spell_name,
-            );
-            // "Spell Card" marker to the left.
-            draw_text(
-                &mut cmds,
-                [FIELD_X + 8.0, FIELD_Y + 30.0],
-                12.0,
-                [0.8, 0.8, 1.0, 0.8],
-                "Spell Card",
-            );
-        }
-
-        // Capture / failure result flash.
-        if self.spell_result > 0 {
-            let (text, tint) = if self.spell_captured {
-                ("Spell Card Captured!", [0.6, 1.0, 0.6, 1.0])
+            let secs = secs.min(99);
+            let tint = if secs >= 20 {
+                [0.627, 0.816, 1.0, 1.0] // COLOR1 0xa0d0ff
+            } else if secs >= 10 {
+                [0.627, 0.502, 1.0, 1.0] // COLOR2 0xa080ff
+            } else if secs >= 5 {
+                [0.878, 0.502, 0.753, 1.0] // COLOR3 0xe080c0
             } else {
-                ("Spell Card Bonus Failed", [1.0, 0.6, 0.6, 1.0])
+                [1.0, 0.251, 0.251, 1.0] // COLOR4 0xff4040
             };
-            let w = text.len() as f32 * 14.0 * 0.75;
-            draw_text(
-                &mut cmds,
-                [FIELD_X + FIELD_W / 2.0 - w / 2.0, FIELD_Y + FIELD_H / 2.0],
-                14.0,
-                tint,
-                text,
-            );
+            draw_text(&mut cmds, [FIELD_X + FIELD_W - 28.0, FIELD_Y + 8.0], 16.0, tint, &format!("{secs:02}"));
+        }
+
+        // Boss spellcard portrait (enemySpellcardPortrait): the boss face sprite
+        // selected by spellcardSprite, slid in from (480,240) to (320,240) and
+        // faded out by face*.anm script 3.
+        if let Some(r) = &self.portrait_runner {
+            if r.visible() {
+                let psx = if self.spell_portrait_sprite == 0 { 0.0 } else { 128.0 };
+                let w = 128.0 * r.scale[0];
+                let h = 256.0 * r.scale[1];
+                cmds.push(DrawCmd {
+                    tex: self.face_boss_tex,
+                    dst: [r.pos[0] - w / 2.0, r.pos[1] - h / 2.0, w, h],
+                    src: [psx / 256.0, 0.0, (psx + 128.0) / 256.0, 1.0],
+                    tint: [1.0, 1.0, 1.0, r.alpha],
+                    rot: 0.0,
+                });
+            }
+        }
+
+        // Spellcard name announce: driven by text.anm script 7's VM (fly-in at
+        // (256,312) scale 3 -> shrink to 1 -> fly to (256,40) -> off). The name
+        // sprite is centre-anchored at the VM pos; the blue bar (front.anm
+        // script 24, enemySpellcardBackground) follows it, width strlen*15/2+16.
+        if let Some(r) = &self.spell_name_runner {
+            if r.visible() && !self.spell_name.is_empty() {
+                let scale = r.scale[0].max(0.01);
+                // The original draws the name in the clipped game-region viewport
+                // with short Japanese text; the VM x is fixed at 256 until the
+                // fly-off. Centre it in the playfield so the longer English name
+                // stays readable, and follow the VM x once it flies off right.
+                let cx = if r.pos[0] > 256.5 { r.pos[0] } else { FIELD_X + FIELD_W / 2.0 };
+                let bar_len = self.spell_name.chars().count() as f32 * 15.0 / 2.0 + 16.0;
+                if let Some(([sx, sy, sw, sh], _, bscale, _)) = self.hud.script_state(24) {
+                    let ts = self.hud.tex_size();
+                    let bh = sh * bscale[1];
+                    cmds.push(DrawCmd {
+                        tex: self.hud.tex(),
+                        dst: [cx - bar_len / 2.0, r.pos[1] - bh / 2.0, bar_len, bh],
+                        src: [sx / ts, sy / ts, (sx + sw) / ts, (sy + sh) / ts],
+                        tint: [1.0, 1.0, 1.0, r.alpha],
+                        rot: 0.0,
+                    });
+                }
+                // Name text: 15px glyphs scaled by the VM, centred at `cx`.
+                let w = self.spell_name.chars().count() as f32 * 14.0 * scale;
+                draw_num_scaled(
+                    &mut cmds,
+                    [cx - w / 2.0, r.pos[1] - 7.5 * scale],
+                    scale,
+                    [1.0, 0.94, 0.94, r.alpha],
+                    &self.spell_name,
+                );
+            }
         }
 
         // Dialogue box.
@@ -2558,82 +2732,235 @@ impl Stage {
         cmds
     }
 
+    /// Roll the displayed score toward the real score (GameManager guiScore).
+    fn roll_gui_score(&mut self) {
+        if self.gui_score == self.score {
+            return;
+        }
+        if self.score < self.gui_score {
+            self.score = self.gui_score;
+        }
+        let mut inc = (self.score - self.gui_score) >> 5;
+        inc = inc.clamp(10, 78910);
+        inc -= inc % 10;
+        if self.next_score_inc < inc {
+            self.next_score_inc = inc;
+        }
+        if self.gui_score + self.next_score_inc > self.score {
+            self.next_score_inc = self.score - self.gui_score;
+        }
+        self.gui_score += self.next_score_inc;
+        if self.gui_score >= self.score {
+            self.next_score_inc = 0;
+            self.gui_score = self.score;
+        }
+    }
+
+    /// Ease the boss health bar toward the boss's life fraction (Gui
+    /// bossHealthBar2 toward bossHealthBar1): up 0.01/frame, down 0.02/frame.
+    fn roll_boss_bar(&mut self) {
+        let target = self
+            .enemies
+            .iter()
+            .find(|e| e.is_boss && e.occupied)
+            .map(|b| (b.life.max(0) as f32 / b.max_life.max(1) as f32).clamp(0.0, 1.0));
+        match target {
+            Some(t) => {
+                if self.boss_bar < t {
+                    self.boss_bar = (self.boss_bar + 0.01).min(t);
+                } else if self.boss_bar > t {
+                    self.boss_bar = (self.boss_bar - 0.02).max(t);
+                }
+            }
+            None => self.boss_bar = 0.0,
+        }
+    }
+
+    /// Boss UI over the field (Gui::DrawGameScene): the front.anm health bar,
+    /// the remaining-attack count, the spellcard timer, and the spell name.
+    /// Positions are the decomp's arcade-region coords plus the field origin.
+    fn draw_boss_ui(&self, cmds: &mut Vec<DrawCmd>) {
+        let Some(boss) = self.enemies.iter().find(|e| e.is_boss && e.occupied) else {
+            return;
+        };
+
+        let ts = self.hud.tex_size();
+
+        // "Enemy" label (script 19), self-placed by its own script.
+        if let Some(([sx, sy, sw, sh], pos, scale, alpha)) = self.hud.script_state(19) {
+            cmds.push(DrawCmd {
+                tex: self.hud.tex(),
+                dst: [
+                    FIELD_X + pos[0] - sw * scale[0] / 2.0,
+                    FIELD_Y + pos[1] - sh * scale[1] / 2.0,
+                    sw * scale[0],
+                    sh * scale[1],
+                ],
+                src: [sx / ts, sy / ts, (sx + sw) / ts, (sy + sh) / ts],
+                tint: [1.0, 1.0, 1.0, alpha],
+                rot: 0.0,
+            });
+        }
+
+        // Health bar (script 21): top-left anchored at field (96, 24), width
+        // `bossHealthBar2 * 288` (the decomp's scaleX*14), keeping the script's
+        // own scaleY (0.3 -> ~4px tall) and fade-in alpha.
+        if let Some(([sx, sy, sw, sh], _, scale, alpha)) = self.hud.script_state(21) {
+            cmds.push(DrawCmd {
+                tex: self.hud.tex(),
+                dst: [FIELD_X + 96.0, FIELD_Y + 24.0, self.boss_bar * 288.0, sh * scale[1]],
+                src: [sx / ts, sy / ts, (sx + sw) / ts, (sy + sh) / ts],
+                tint: [1.0, 1.0, 1.0, alpha],
+                rot: 0.0,
+            });
+        }
+
+        // Remaining-attack count (eclSetLives) at field (80, 16), yellow.
+        // (The spell timer and name banner are drawn by the field pass.)
+        if boss.spell_count > 0 {
+            draw_text(
+                cmds,
+                [FIELD_X + 76.0, FIELD_Y + 12.0],
+                14.0,
+                [1.0, 1.0, 0.5, 1.0],
+                &boss.spell_count.to_string(),
+            );
+        }
+    }
+
     fn draw_hud(&self, cmds: &mut Vec<DrawCmd>) {
-        let border = [0.12, 0.05, 0.08, 1.0];
-        cmds.push(rect([0.0, 0.0, 640.0, FIELD_Y], border));
-        cmds.push(rect([0.0, FIELD_Y + FIELD_H, 640.0, 480.0 - FIELD_Y - FIELD_H], border));
-        cmds.push(rect([0.0, 0.0, FIELD_X, 480.0], border));
-        cmds.push(rect([FIELD_X + FIELD_W, 0.0, 640.0 - FIELD_X - FIELD_W, 480.0], border));
-
-        // The playfield matches the original exactly (32,16,384,448), so the
-        // sidebar uses the original Gui::OnDraw screen coordinates: labels in a
-        // left column, values/stars/bar anchored at x=496.
-        let lx = FIELD_X + FIELD_W; // 416 — label column
-        let vx = 496.0; // value column (Gui.cpp)
-        let label = [1.0, 0.4, 0.25, 1.0]; // EoSD label red
         let val = [1.0, 1.0, 1.0, 1.0];
+        let vx = 496.0; // value column (Gui.cpp)
 
-        // High Score / Score: 9-digit zero-padded (Gui "%.9d", y 58 / 82).
-        draw_text(cmds, [lx, 58.0], 11.0, label, "HighScore");
-        draw_text(cmds, [vx, 58.0], 14.0, val, &format!("{:09}", self.hiscore.max(self.score)));
-        draw_text(cmds, [lx, 82.0], 11.0, label, "Score");
-        draw_text(cmds, [vx, 82.0], 14.0, val, &format!("{:09}", self.score));
+        // Border frame from front.anm tiles (Gui.cpp:1046-1074): vms[6] left
+        // column + right block, vms[7] top row, vms[8] bottom row.
+        let mut y = 0.0;
+        while y < 464.0 {
+            self.hud.draw_sprite(cmds, 6, 0.0, y, 1.0);
+            y += 32.0;
+        }
+        let mut x = 416.0;
+        while x < 624.0 {
+            let mut y = 0.0;
+            while y < 464.0 {
+                self.hud.draw_sprite(cmds, 6, x, y, 1.0);
+                y += 32.0;
+            }
+            x += 32.0;
+        }
+        let mut x = 32.0;
+        while x < 416.0 {
+            self.hud.draw_sprite(cmds, 7, x, 0.0, 1.0);
+            self.hud.draw_sprite(cmds, 8, x, 464.0, 1.0);
+            x += 32.0;
+        }
 
-        // Player / Bomb stars (y 122 / 146, x 496 step 16).
-        draw_text(cmds, [lx, 122.0], 14.0, label, "Player");
+        // Self-placed front.anm labels (vms[9-15]) + rotating emblems (vms[0-5]).
+        self.hud.draw(cmds);
+
+        // Value-row plates (vms[22]) behind each value (Gui.cpp:1096-1130).
+        for &py in &[58.0, 82.0, 122.0, 146.0, 186.0, 206.0, 226.0] {
+            self.hud.draw_sprite(cmds, 22, vx, py, 1.0);
+        }
+        self.hud.draw_sprite(cmds, 22, 488.0, 464.0, 1.0);
+        self.hud.draw_sprite(cmds, 22, 0.0, 464.0, 1.0);
+
+        // HiScore (y58) and rolling Score (y82), "%.9d" (Gui.cpp:1205-1208).
+        draw_num(cmds, [vx, 58.0], val, &format!("{:09}", self.hiscore));
+        draw_num(cmds, [vx, 82.0], val, &format!("{:09}", self.gui_score));
+
+        // Lives (vms[16]) / bombs (vms[17]) stars, x=496 + idx*16.
         for i in 0..self.lives.max(0) {
-            cmds.push(hud_sprite(HUD_STAR_RED, [vx + i as f32 * 16.0, 122.0]));
+            self.hud.draw_sprite(cmds, 16, vx + i as f32 * 16.0, 122.0, 1.0);
         }
-        draw_text(cmds, [lx, 146.0], 14.0, label, "Bomb");
         for i in 0..self.bombs.max(0) {
-            cmds.push(hud_sprite(HUD_STAR_GREEN, [vx + i as f32 * 16.0, 146.0]));
+            self.hud.draw_sprite(cmds, 17, vx + i as f32 * 16.0, 146.0, 1.0);
         }
 
-        // Power gauge: a bar whose width is the power value (max 128), bright at
-        // the left grading to cyan, plus the number or a "MAX" tag (Gui y 186).
-        draw_text(cmds, [lx, 186.0], 14.0, label, "Power");
-        if self.world.power > 0 {
-            let w = self.world.power.min(128) as f32;
-            cmds.push(rect([vx, 192.0, w, 7.0], [0.55, 0.85, 1.0, 0.9]));
-            cmds.push(rect([vx, 192.0, w * 0.4, 7.0], [0.9, 0.95, 1.0, 0.9]));
+        // Power bar: the decomp's gradient quad, width = currentPower px
+        // (Gui.cpp:1152-1198), 0xe0e0e0 -> 0x80e0e0. Drawn as the 2x1 gradient
+        // texture sampled at its texel centres (0.25..0.75) so the endpoints are
+        // exact and the GPU linearly interpolates between them. Then the MAX
+        // sprite (vms[18]) at full, else the numeric value, both at (496,186).
+        let power = self.world.power.max(0);
+        if power > 0 {
+            cmds.push(DrawCmd {
+                tex: TEX_POWER_GRAD,
+                dst: [vx, 186.0, power as f32, 16.0],
+                src: [0.25, 0.5, 0.75, 0.5],
+                tint: [1.0, 1.0, 1.0, 1.0],
+                rot: 0.0,
+            });
         }
-        if self.world.power >= 128 {
-            draw_text(cmds, [vx, 184.0], 13.0, [1.0, 1.0, 0.5, 1.0], "MAX");
+        if power >= 128 {
+            self.hud.draw_sprite(cmds, 18, vx, 186.0, 1.0);
         } else {
-            draw_text(cmds, [vx + 56.0, 184.0], 12.0, val, &format!("{}", self.world.power));
+            draw_num(cmds, [vx, 186.0], val, &format!("{power}"));
         }
 
-        // Graze / Point (Gui y 206 / 226).
-        draw_text(cmds, [lx, 206.0], 14.0, label, "Graze");
-        draw_text(cmds, [vx, 206.0], 13.0, val, &format!("{}", self.graze));
-        draw_text(cmds, [lx, 226.0], 14.0, label, "Point");
-        draw_text(cmds, [vx, 226.0], 13.0, val, &format!("{}", self.point_items));
+        // Graze (y206) and point items (y226), "%d".
+        draw_num(cmds, [vx, 206.0], val, &format!("{}", self.graze));
+        draw_num(cmds, [vx, 226.0], val, &format!("{}", self.point_items));
 
-        let mut logo = hud_sprite(HUD_LOGO, [lx + 40.0, 320.0]);
-        logo.tint = [1.0, 1.0, 1.0, 0.85];
-        cmds.push(logo);
+        // "Full Power Mode!!" popup (Gui.cpp:185-190,908-922): pale blue, slides
+        // in from the right edge to x=104 over 30 frames, shown 180 frames.
+        if self.full_power_timer > 0 {
+            let elapsed = 180 - self.full_power_timer.min(180);
+            let px = if elapsed < 30 {
+                640.0 - elapsed as f32 * 312.0 / 30.0
+            } else {
+                104.0
+            };
+            draw_num(cmds, [px, 232.0], [0.753, 0.690, 1.0, 1.0], "Full Power Mode!!");
+        }
+
+        // "BONUS %8d" popup (Gui.cpp:179-183,891-906): light yellow, slides in
+        // from the right edge to x=104, y=32.
+        if self.bonus_score_timer > 0 {
+            let elapsed = 250 - self.bonus_score_timer.min(250);
+            let px = if elapsed < 30 {
+                640.0 - elapsed as f32 * 312.0 / 30.0
+            } else {
+                104.0
+            };
+            draw_num(cmds, [px, 32.0], [1.0, 1.0, 0.502, 1.0], &format!("BONUS {:8}", self.bonus_score_amount));
+        }
+
+        // "Spell Card Bonus!" + "+N" popup (Gui.cpp:192-210), centred near top.
+        if self.spell_bonus_timer > 0 {
+            let title = "Spell Card Bonus!";
+            let tx = (FIELD_W - title.len() as f32 * 16.0) / 2.0 + FIELD_X;
+            draw_num(cmds, [tx, FIELD_Y + 64.0], [1.0, 0.0, 0.0, 1.0], title);
+            let amt = format!("+{}", self.spell_bonus_amount);
+            let ax = (FIELD_W - amt.len() as f32 * 32.0) / 2.0 + FIELD_X;
+            draw_num_scaled(cmds, [ax, FIELD_Y + 80.0], 2.0, [1.0, 0.502, 0.502, 1.0], &amt);
+        }
+
+        self.draw_boss_ui(cmds);
 
         match self.state {
             PlayerState::GameOver(_) => {
                 cmds.push(rect([FIELD_X, FIELD_Y, FIELD_W, FIELD_H], [0.0, 0.0, 0.0, 0.6]));
             }
             PlayerState::Cleared(_) => {
-                cmds.push(rect([FIELD_X, FIELD_Y, FIELD_W, FIELD_H], [0.0, 0.0, 0.08, 0.72]));
-                let cx = FIELD_X + 40.0;
-                let mut y = FIELD_Y + 90.0;
-                draw_text(cmds, [FIELD_X + FIELD_W / 2.0 - 80.0, FIELD_Y + 50.0], 22.0, [1.0, 1.0, 0.5, 1.0], "STAGE 1 CLEAR");
-                let rows = [
-                    ("Graze".to_string(), self.graze.to_string()),
-                    ("Spell".to_string(), if self.spell_captured { "Captured".into() } else { "-".into() }),
-                    ("Clear bonus".to_string(), self.clear_bonus.to_string()),
-                    ("Score".to_string(), self.score.to_string()),
-                    ("Hi-Score".to_string(), self.hiscore.to_string()),
-                ];
-                for (label, val) in rows {
-                    draw_text(cmds, [cx, y], 16.0, [0.8, 0.85, 1.0, 1.0], &label);
-                    draw_text(cmds, [cx + 130.0, y], 16.0, [1.0, 1.0, 1.0, 1.0], &val);
-                    y += 30.0;
-                }
+                // Stage-clear bonus breakdown (Gui.cpp:88-172), drawn over the
+                // field at (GAME_REGION_LEFT+42, TOP+112).
+                let x = FIELD_X + 42.0;
+                let graze_in = (self.graze - self.graze_start).max(0);
+                let (diff_text, _) = match self.world.difficulty {
+                    0 => ("Easy Rank      * 0.5", 0),
+                    2 => ("Hard Rank      * 1.2", 0),
+                    3 => ("Lunatic Rank   * 1.5", 0),
+                    4 => ("Extra Rank     * 2.0", 0),
+                    _ => ("Normal Rank    * 1.0", 0),
+                };
+                draw_num(cmds, [x, FIELD_Y + 112.0], [1.0, 1.0, 0.251, 1.0], "Stage Clear");
+                draw_num(cmds, [x, FIELD_Y + 144.0], [1.0, 1.0, 1.0, 1.0], &format!("Stage * 1000 = {:5}", self.stage_num as i64 * 1000));
+                draw_num(cmds, [x, FIELD_Y + 160.0], [0.878, 0.878, 1.0, 1.0], &format!("Power *  100 = {:5}", self.world.power as i64 * 100));
+                draw_num(cmds, [x, FIELD_Y + 176.0], [0.816, 0.816, 1.0, 1.0], &format!("Graze *   10 = {:5}", graze_in * 10));
+                draw_num(cmds, [x, FIELD_Y + 192.0], [1.0, 0.502, 0.502, 1.0], &format!("    * Point Item {:3}", self.point_items));
+                draw_num(cmds, [x, FIELD_Y + 224.0], [1.0, 0.502, 0.502, 1.0], diff_text);
+                draw_num(cmds, [x, FIELD_Y + 240.0], [1.0, 1.0, 1.0, 1.0], &format!("Total     = {:8}", self.clear_bonus));
             }
             _ => {}
         }
@@ -2670,6 +2997,71 @@ const LASER_COLORS: [[f32; 4]; 16] = [
     [1.0, 0.6, 0.3, 0.8],
     [1.0, 1.0, 1.0, 0.8],
 ];
+
+/// Stage-clear bonus, an exact port of `Gui.cpp:935-963`:
+/// `(stage*1000 + grazeInStage*10 + power*100) * pointItems`, then (final stage
+/// only) `+lives*3M + bombs*1M`, then the difficulty multiplier with a `-= %10`
+/// round-down. `difficulty`: 0 Easy, 1 Normal, 2 Hard, 3 Lunatic, 4 Extra.
+/// (The lifeCount-config penalty isn't modelled — the port has no such option.)
+fn stage_clear_bonus(
+    stage: i32,
+    graze_in_stage: i64,
+    power: i64,
+    point_items: i64,
+    lives: i64,
+    bombs: i64,
+    difficulty: u8,
+) -> i64 {
+    let mut s = stage as i64 * 1000;
+    s += graze_in_stage * 10;
+    s += power * 100;
+    s *= point_items;
+    if stage >= 6 {
+        s += lives * 3_000_000;
+        s += bombs * 1_000_000;
+    }
+    s = match difficulty {
+        0 => s / 2,          // Easy
+        2 => s * 12 / 10,    // Hard
+        3 => s * 15 / 10,    // Lunatic
+        4 => s * 2,          // Extra
+        _ => return s,       // Normal: no multiplier, no round-down
+    };
+    s - s % 10
+}
+
+/// Draw HUD numbers/text with the original AsciiManager metrics: a 15px glyph
+/// advancing 14px per character (`charWidth = 14 * scale.x`, AsciiManager.cpp).
+fn draw_num(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], tint: [f32; 4], text: &str) {
+    draw_num_scaled(cmds, pos, 1.0, tint, text);
+}
+
+/// As [`draw_num`] but with an AsciiManager scale (e.g. 2.0 for the spellcard
+/// bonus "+N").
+fn draw_num_scaled(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], scale: f32, tint: [f32; 4], text: &str) {
+    let mut x = pos[0];
+    for ch in text.chars() {
+        let c = ch as u32;
+        if (0x21..=0x7e).contains(&c) {
+            let idx = c - 0x20;
+            let (col, row) = ((idx % 16) as f32, (idx / 16 + 2) as f32);
+            let e = 0.5 / 256.0;
+            cmds.push(DrawCmd {
+                tex: TEX_ASCII,
+                dst: [x.round(), pos[1].round(), 15.0 * scale, 15.0 * scale],
+                src: [
+                    col * 16.0 / 256.0 + e,
+                    row * 16.0 / 256.0 + e,
+                    (col + 1.0) * 16.0 / 256.0 - e,
+                    (row + 1.0) * 16.0 / 256.0 - e,
+                ],
+                tint,
+                rot: 0.0,
+            });
+        }
+        x += 14.0 * scale;
+    }
+}
 
 /// Draw ASCII text using the 16x16 glyph grid in ascii.png.
 pub fn draw_text(cmds: &mut Vec<DrawCmd>, pos: [f32; 2], size: f32, tint: [f32; 4], text: &str) {
@@ -2716,13 +3108,3 @@ fn sprite_at(s: SpriteRef, field_pos: [f32; 2], alpha: f32) -> DrawCmd {
     }
 }
 
-fn hud_sprite(s: SpriteRef, screen_pos: [f32; 2]) -> DrawCmd {
-    let [x, y, w, h] = s.rect;
-    DrawCmd {
-        tex: s.tex,
-        dst: [screen_pos[0], screen_pos[1], w, h],
-        src: [x / 256.0, y / 256.0, (x + w) / 256.0, (y + h) / 256.0],
-        tint: [1.0, 1.0, 1.0, 1.0],
-        rot: 0.0,
-    }
-}
