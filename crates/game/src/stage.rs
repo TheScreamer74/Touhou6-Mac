@@ -932,6 +932,17 @@ impl Stage {
         self.pos[0]
     }
 
+    /// Every live bullet as [pos.x, pos.y, angle, speed] — for the full-VM
+    /// oracle diff against the decomp.
+    pub fn bullets_dump(&self) -> Vec<[f32; 4]> {
+        self.world.bullets.iter().map(|b| [b.pos[0], b.pos[1], b.angle, b.speed]).collect()
+    }
+
+    /// Occupied enemy positions [x, y] — oracle diff (isolates movement).
+    pub fn enemies_dump(&self) -> Vec<[f32; 2]> {
+        self.enemies.iter().filter(|e| e.occupied).map(|e| [e.pos[0], e.pos[1]]).collect()
+    }
+
     /// X of the boss if present, else the lowest (closest) live enemy — the
     /// headless harness steers the player under this to actually fight.
     pub fn target_x(&self) -> Option<f32> {
