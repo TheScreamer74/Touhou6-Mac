@@ -770,6 +770,14 @@ impl Stage {
                     instrs.iter().any(|i| i.opcode == 26 && i.arg_u32(0) != 0);
             }
         }
+        // Sprite height (px) per bullet type, from each type's base sprite — used
+        // by ex-instructions that only touch big bullets (e.g. Sakuya's redirect).
+        let mut bullet_heights = [0.0f32; 10];
+        for (t, &base) in BULLET_BASE_SPRITE.iter().enumerate() {
+            if let Some(sp) = etama.sprites.iter().find(|s| s.index == base) {
+                bullet_heights[t] = sp.height;
+            }
+        }
         Self {
             tick: 0,
             anim: 0,
@@ -789,6 +797,7 @@ impl Stage {
                 character: character.is_marisa() as u8,
                 shot_type: matches!(character, Character::ReimuB | Character::MarisaB) as u8,
                 time_stopped: false,
+                bullet_heights,
             },
             enemies: Vec::new(),
             anims: Vec::new(),

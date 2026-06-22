@@ -119,6 +119,13 @@ pub struct Bullet {
     pub speed: f32,
     /// etama3 sprite index (type base + color offset).
     pub sprite: u32,
+    /// Colour offset within the bullet type's sprite group (the `spriteOffset`
+    /// the decomp tracks; ex-instructions test/overwrite it, e.g. Sakuya's
+    /// redirect sets it to 5).
+    pub sprite_offset: i32,
+    /// Sprite height in px (the type's `heightPx`), used by ex-instructions that
+    /// only affect "big" bullets (>= 30px).
+    pub height: f32,
     pub spawn_delay: u32,
     pub timer: i32,
     pub ex_flags: u32,
@@ -333,6 +340,9 @@ pub struct World {
     /// bullets freeze in place; toggled by EXINSCALL #4. The boss keeps moving
     /// and firing, so new bullets are laid down over the frozen field.
     pub time_stopped: bool,
+    /// Sprite height (px) per bullet type 0..9, from etama3.anm. Used by
+    /// ex-instructions that only touch "big" bullets (>= 30px).
+    pub bullet_heights: [f32; 10],
 }
 
 impl World {
@@ -1289,10 +1299,39 @@ impl Enemy {
             }
             4 => {
                 // ExInsStage56Func4: param < 2 toggles Sakuya's time-stop
-                // (isTimeStopped = u8Param). The param >= 2 bullet-redirect branch
-                // needs per-bullet sprite-height tests our bullets lack — skipped.
+                // (isTimeStopped = u8Param). param >= 2 is the "misdirection"
+                // redirect: re-aim a capped number of big (>=30px) bullets and
+                // swap them to colour offset 5.
                 if param < 2 {
                     world.time_stopped = (param & 0xff) != 0;
+                } else {
+                    let normal = world.difficulty <= 1; // <= NORMAL
+                    let mut left: i32 = if normal { 14 } else { 52 };
+                    let player = world.player_pos;
+                    let rng = &mut world.rng;
+                    for b in world.bullets.iter_mut() {
+                        if b.height >= 30.0 && b.sprite_offset != 5 && rng.u16() % 4 == 0 {
+                            let base = (b.sprite as i32 - b.sprite_offset).max(0) as u32;
+                            b.sprite_offset = 5;
+                            b.sprite = base + 5;
+                            let dx = b.pos[0] - player[0];
+                            let dy = b.pos[1] - player[1];
+                            b.angle = if (dx * dx + dy * dy).sqrt() > 128.0 {
+                                if normal {
+                                    rng.f32_zero_to_one() * (3.0 * PI / 4.0) + PI / 4.0
+                                } else {
+                                    rng.f32_zero_to_one() * TAU
+                                }
+                            } else {
+                                // AngleFromPlayer (player -> bullet) + π/2 + rand(2π).
+                                dy.atan2(dx) + PI / 2.0 + rng.f32_in_range(TAU)
+                            };
+                            left -= 1;
+                            if left == 0 {
+                                break;
+                            }
+                        }
+                    }
                 }
                 self.ctx.ivars[2] = 0; // var2 = 0
             }
@@ -1692,11 +1731,14 @@ pub fn spawn_bullet_pattern(world: &mut World, props: &BulletProps) {
                 ex_int0 = props.ex_ints[0];
                 ex_int1 = props.ex_ints[1];
             }
+            let bullet_type = props.sprite.clamp(0, 9) as usize;
             world.bullets.push(Bullet {
                 pos: props.pos,
                 angle,
                 speed,
                 sprite: base + props.sprite_offset.max(0) as u32,
+                sprite_offset: props.sprite_offset.max(0),
+                height: world.bullet_heights[bullet_type],
                 spawn_delay,
                 timer: 0,
                 ex_flags: props.flags,
