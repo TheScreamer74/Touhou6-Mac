@@ -23,6 +23,7 @@ fn make_world() -> World {
         shot_type: 0,
         time_stopped: false,
         bullet_heights: [0.0; 10],
+        bullet_widths: [0.0; 10],
     }
 }
 

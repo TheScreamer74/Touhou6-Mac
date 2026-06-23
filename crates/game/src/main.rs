@@ -191,8 +191,12 @@ fn main() {
 
     let engine = Engine::new();
     // Headless dumps (screenshot / record / demo) run silent.
-    let with_audio =
-        screenshot.is_none() && record.is_none() && record_split.is_none() && demo.is_none() && !probe_run;
+    let with_audio = screenshot.is_none()
+        && record.is_none()
+        && record_split.is_none()
+        && demo.is_none()
+        && !probe_run
+        && !ecl_dump;
     let (textures, mut game) = build_game(&engine, &files, with_audio);
 
     let hiscore_path = game_dir.join("th06_hiscore.txt");
@@ -214,6 +218,9 @@ fn main() {
     // same format as oracle/vm/oracle_main.cpp. Diff to find any execution-layer
     // divergence from the decomp.
     if ecl_dump {
+        // The oracle's player is invincible (no collision); match that so the
+        // fixed player doesn't die and clear the field.
+        unsafe { std::env::set_var("TH06_GOD", "1") };
         let ch = [Character::ReimuA, Character::ReimuB, Character::MarisaA, Character::MarisaB][debug_char.min(3)];
         game.debug_start_stage(ch, debug_lives, debug_stage.saturating_sub(1), debug_power, debug_score);
         let dump_enemies = std::env::var_os("DUMP_ENEMIES").is_some();

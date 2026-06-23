@@ -773,9 +773,11 @@ impl Stage {
         // Sprite height (px) per bullet type, from each type's base sprite — used
         // by ex-instructions that only touch big bullets (e.g. Sakuya's redirect).
         let mut bullet_heights = [0.0f32; 10];
+        let mut bullet_widths = [0.0f32; 10];
         for (t, &base) in BULLET_BASE_SPRITE.iter().enumerate() {
             if let Some(sp) = etama.sprites.iter().find(|s| s.index == base) {
                 bullet_heights[t] = sp.height;
+                bullet_widths[t] = sp.width;
             }
         }
         Self {
@@ -798,6 +800,7 @@ impl Stage {
                 shot_type: matches!(character, Character::ReimuB | Character::MarisaB) as u8,
                 time_stopped: false,
                 bullet_heights,
+                bullet_widths,
             },
             enemies: Vec::new(),
             anims: Vec::new(),
@@ -1756,11 +1759,11 @@ impl Stage {
             // [0,FIELD_W] x [0,FIELD_H]. Normal bullets die on the first OOB frame;
             // dir-change/bounce bullets (0x40/0x80/0x100/0x400/0x800) get 256.
             if b.spawn_delay == 0 {
-                let hw = b.height / 2.0;
+                let (hw, hh) = (b.width / 2.0, b.height / 2.0);
                 let in_bounds = b.pos[0] + hw >= 0.0
                     && b.pos[0] - hw <= FIELD_W
-                    && b.pos[1] + hw >= 0.0
-                    && b.pos[1] - hw <= FIELD_H;
+                    && b.pos[1] + hh >= 0.0
+                    && b.pos[1] - hh <= FIELD_H;
                 let roamer = b.ex_flags & 0xdc0 != 0;
                 if in_bounds {
                     b.oob_count = 0;

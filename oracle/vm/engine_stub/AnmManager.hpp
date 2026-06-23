@@ -9,10 +9,20 @@ namespace th06 {
 // sprite indices (110..129) are 32px (>=30 test), everything else 16px.
 struct AnmManager {
     AnmLoadedSprite spritePool[1024];
+    // Real etama3 bullet sprite sizes (per type base range): w,h in px.
+    static void sizeFor(i32 s, f32* w, f32* h){
+        if (s>=14 && s<=29)       { *w=8;  *h=8;  }  // pellet
+        else if (s>=46 && s<=61)  { *w=14; *h=16; }  // rice
+        else if (s>=78 && s<=93)  { *w=14; *h=16; }  // kunai
+        else if (s>=94 && s<=109) { *w=14; *h=16; }  // shard
+        else if (s>=110 && s<=117){ *w=32; *h=32; }  // big-ball
+        else if (s>=118 && s<=121){ *w=30; *h=30; }  // fireball
+        else if (s>=122 && s<=129){ *w=32; *h=32; }  // dagger
+        else                      { *w=16; *h=16; }  // ring/ball/laser/etc
+    }
     void setSprite(AnmVm* vm, i32 spriteIdx){
         i32 i = spriteIdx & 1023;
-        spritePool[i].heightPx = (spriteIdx>=110 && spriteIdx<=129) ? 32.0f : 16.0f;
-        spritePool[i].widthPx = spritePool[i].heightPx;
+        sizeFor(spriteIdx, &spritePool[i].widthPx, &spritePool[i].heightPx);
         vm->sprite = &spritePool[i];
         vm->activeSpriteIndex = (i16)spriteIdx;
     }

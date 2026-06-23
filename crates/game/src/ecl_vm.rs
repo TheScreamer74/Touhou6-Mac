@@ -126,6 +126,8 @@ pub struct Bullet {
     /// Sprite height in px (the type's `heightPx`), used by ex-instructions that
     /// only affect "big" bullets (>= 30px).
     pub height: f32,
+    /// Sprite width (px), for the off-screen IsInBounds cull (x axis).
+    pub width: f32,
     pub spawn_delay: u32,
     /// Speed multiplier while `spawn_delay > 0` (the spawn-in slow-down).
     pub spawn_factor: f32,
@@ -348,6 +350,9 @@ pub struct World {
     /// Sprite height (px) per bullet type 0..9, from etama3.anm. Used by
     /// ex-instructions that only touch "big" bullets (>= 30px).
     pub bullet_heights: [f32; 10],
+    /// Sprite width (px) per bullet type 0..9, from etama3.anm. Used (with
+    /// height) by the off-screen IsInBounds cull.
+    pub bullet_widths: [f32; 10],
 }
 
 impl World {
@@ -1807,6 +1812,7 @@ pub fn spawn_bullet_pattern(world: &mut World, props: &BulletProps) {
                 oob_count: 0,
                 sprite_offset: props.sprite_offset.max(0),
                 height: world.bullet_heights[bullet_type],
+                width: world.bullet_widths[bullet_type],
                 spawn_delay,
                 timer: 0,
                 ex_flags: props.flags,
