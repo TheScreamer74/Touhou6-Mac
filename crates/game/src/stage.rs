@@ -1271,7 +1271,17 @@ impl Stage {
                 continue;
             }
             e.frame_move();
-            if !e.update_bounds() {
+            // Current primaryVm sprite size (px) for the off-screen despawn test
+            // (EnemyManager.cpp:549). (0,0) until the first ANMSETMAIN runs.
+            let (sw, sh) = self
+                .anims
+                .get(i)
+                .and_then(|a| a.as_ref())
+                .and_then(|r| r.sprite)
+                .and_then(|idx| self.enemy_scripts.get(&e.anm_script).and_then(|s| s.sprites.get(&idx)))
+                .map(|sp| (sp.width, sp.height))
+                .unwrap_or((0.0, 0.0));
+            if !e.update_bounds(sw, sh) {
                 e.despawn(&mut self.world);
                 continue;
             }
@@ -1999,6 +2009,13 @@ impl Stage {
     }
 
     fn start_dialogue(&mut self, idx: usize) {
+        // Oracle-comparison mode: skip dialogue so the timeline doesn't freeze
+        // (matches the full-VM oracle's stubbed Gui::MsgWait). The MsgWait
+        // timeline op then never holds, so the boss/midboss attack interrupts
+        // fire on schedule, exactly as in the stubbed decomp run.
+        if std::env::var_os("TH06_NO_DIALOGUE").is_some() {
+            return;
+        }
         let Some(&off) = self.msg.offsets.get(idx) else { return };
         self.dialogue = Dialogue { active: true, off, ..Default::default() };
         // Dialogue clears the field of bullets in practice.

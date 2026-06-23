@@ -1550,12 +1550,17 @@ impl Enemy {
     }
 
     /// Bounds bookkeeping; returns false when the enemy should despawn.
-    pub fn update_bounds(&mut self) -> bool {
-        let margin = 32.0;
-        let inside = self.pos[0] + margin >= 0.0
-            && self.pos[0] - margin <= FIELD_W
-            && self.pos[1] + margin >= 0.0
-            && self.pos[1] - margin <= FIELD_H;
+    /// `(w, h)` is the enemy's current `primaryVm.sprite` size in px — the decomp
+    /// (EnemyManager.cpp:549) tests `GameManager::IsInBounds(pos, sprite->widthPx,
+    /// heightPx)`: the sprite rect must overlap [0,FIELD_W]x[0,FIELD_H]. `(0,0)`
+    /// before the first ANMSETMAIN sets a sprite — then the enemy is still off
+    /// screen at spawn, so `has_been_in_bounds` is never set and it can't despawn.
+    pub fn update_bounds(&mut self, w: f32, h: f32) -> bool {
+        let (hw, hh) = (w / 2.0, h / 2.0);
+        let inside = self.pos[0] + hw >= 0.0
+            && self.pos[0] - hw <= FIELD_W
+            && self.pos[1] + hh >= 0.0
+            && self.pos[1] - hh <= FIELD_H;
         if !self.has_been_in_bounds && inside {
             self.has_been_in_bounds = true;
         }

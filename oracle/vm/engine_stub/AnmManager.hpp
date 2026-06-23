@@ -31,7 +31,23 @@ struct AnmManager {
         static const i32 BASE[10]={14,30,46,62,78,94,110,118,122,146};
         i32 t=scriptIdx-0x200; return (t>=0&&t<10)?BASE[t]:0;
     }
-    void SetAndExecuteScriptIdx(AnmVm* vm, i32 scriptIdx){ vm->anmFileIndex=(i16)scriptIdx; vm->baseSpriteIndex=(i16)baseForScript(scriptIdx); setSprite(vm, vm->baseSpriteIndex); }
+    void SetAndExecuteScriptIdx(AnmVm* vm, i32 scriptIdx){
+        vm->anmFileIndex=(i16)scriptIdx;
+        // Enemy main-anm scripts (ANM_SCRIPT_ENEMY_START 0x100 .. 0x1a5): the real
+        // stgNenm fairy sprites in stage 5 are all 30x32 px (verified against the
+        // loaded enemy anm). The despawn (EnemyManager.cpp:549) reads this size, so
+        // it must be real, not the 16px fallback. Bosses never leave the field, so
+        // their (larger) size doesn't affect the despawn verified here.
+        if (scriptIdx >= 0x100 && scriptIdx <= 0x1a5) {
+            i32 i = scriptIdx & 1023;
+            spritePool[i].widthPx = 30; spritePool[i].heightPx = 32;
+            vm->sprite = &spritePool[i];
+            vm->activeSpriteIndex = (i16)scriptIdx;
+            vm->baseSpriteIndex = (i16)scriptIdx;
+            return;
+        }
+        vm->baseSpriteIndex=(i16)baseForScript(scriptIdx); setSprite(vm, vm->baseSpriteIndex);
+    }
     void InitializeAndSetSprite(AnmVm* vm, i32 idx){ setSprite(vm, idx); }
     // etama3 spawn-in script durations (ANM_SCRIPT_BULLET3_SPAWN_* rel 14..20).
     static i32 spawnDur(i32 anmFileIndex){

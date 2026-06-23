@@ -221,6 +221,12 @@ fn main() {
         // The oracle's player is invincible (no collision); match that so the
         // fixed player doesn't die and clear the field.
         unsafe { std::env::set_var("TH06_GOD", "1") };
+        // The full-VM oracle stubs the Gui dialogue (Gui::MsgWait returns false),
+        // so its timeline never freezes for boss/midboss conversations. Match that
+        // here so the bullet comparison continues through the dialogue points
+        // instead of stalling on the real (faithful) text — dialogue timing is a
+        // Gui concern the oracle can't model, not an ECL/bullet concern.
+        unsafe { std::env::set_var("TH06_NO_DIALOGUE", "1") };
         let ch = [Character::ReimuA, Character::ReimuB, Character::MarisaA, Character::MarisaB][debug_char.min(3)];
         game.debug_start_stage(ch, debug_lives, debug_stage.saturating_sub(1), debug_power, debug_score);
         let dump_enemies = std::env::var_os("DUMP_ENEMIES").is_some();

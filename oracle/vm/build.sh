@@ -36,9 +36,8 @@ for f in EnemyEclInstr.cpp BulletManager.cpp EnemyManager.cpp; do sed -i '' '1i\
 # 3. 64-bit: the decomp casts pointers to (int)/(i32) for ECL addressing
 sed -i '' 's/(int)this->/(intptr_t)this->/g; s/(int)instruction/(intptr_t)instruction/g' EclManager.cpp
 sed -i '' 's/(i32)this->/(intptr_t)this->/g; s/(int)this->/(intptr_t)this->/g' EnemyManager.cpp
-
 cd ..
-clang++ -std=c++17 -O2 -ferror-limit=0 -Wno-address-of-temporary \
+clang++ -std=c++17 -O2 -ffp-contract=off -ferror-limit=0 -Wno-address-of-temporary \
     -I stub -I build oracle_main.cpp \
     build/EclManager.cpp build/EnemyEclInstr.cpp build/BulletManager.cpp \
     build/EnemyManager.cpp build/Rng.cpp build/ZunTimer.cpp -o /tmp/oracle_vm
