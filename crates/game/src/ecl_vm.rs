@@ -978,13 +978,17 @@ impl Enemy {
                 }
             }
             76 => {
-                // SHOOTINTERVAL
-                self.shoot_interval = instr.arg_i32(0) + self.shoot_interval_rank(world.rank);
+                // SHOOTINTERVAL (EclManager.cpp:429): set to the arg, THEN add the
+                // rank scaling computed from that new interval (not the old one).
+                self.shoot_interval = instr.arg_i32(0);
+                self.shoot_interval += self.shoot_interval_rank(world.rank);
                 self.shoot_timer = 0;
             }
             77 => {
-                // SHOOTINTERVALDELAYED
-                self.shoot_interval = instr.arg_i32(0) + self.shoot_interval_rank(world.rank);
+                // SHOOTINTERVALDELAYED (EclManager.cpp:434): same, plus a random
+                // initial timer in [0, interval).
+                self.shoot_interval = instr.arg_i32(0);
+                self.shoot_interval += self.shoot_interval_rank(world.rank);
                 if self.shoot_interval != 0 {
                     self.shoot_timer = world.rng.u32_in_range(self.shoot_interval as u32) as i32;
                 }
