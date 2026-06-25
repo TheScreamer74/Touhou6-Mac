@@ -1517,9 +1517,154 @@ impl Enemy {
                     self.ctx.fvars[3] = world.rng.f32_in_range(m) + (96.0 - m / 2.0); // float3
                 }
             }
-            // idx 5,6,7,8,9,10,11,12,14,15 need subsystems this port lacks
-            // (effects, anm-interrupts, per-bullet sprite-height tests,
-            // laser-segment spawning); left unimplemented per the no-approx rule.
+            7 => {
+                // ExInsStage6Func7 (EnemyEclInstr.cpp:795) — Remilia's laser-star
+                // card: two counter-rotating rings of 8 arms, each arm laying 3
+                // segments outward from a 32px-offset start point. param == 0
+                // fires lasers (sprite 1); otherwise the enemy's current
+                // bulletProps from each segment point. One f32 draw up front.
+                let attack_type = param;
+                let rand_mod = world.rng.f32_in_range(TAU);
+                let normal = world.difficulty <= 1;
+                for outer in 0..2 {
+                    let (mut laser_angle, angle_diff) = if outer == 0 {
+                        (-PI + rand_mod, PI / 4.0)
+                    } else {
+                        (7.0 * -PI / 8.0 + rand_mod, -PI / 4.0)
+                    };
+                    let mut pv = [[0.0f32; 2]; 8];
+                    let length0 = 32.0f32;
+                    for slot in pv.iter_mut() {
+                        *slot = [
+                            self.pos[0] + laser_angle.cos() * length0,
+                            self.pos[1] + laser_angle.sin() * length0,
+                        ];
+                        laser_angle += PI / 4.0;
+                    }
+                    laser_angle = if outer == 0 {
+                        -PI + rand_mod
+                    } else {
+                        7.0 * -PI / 8.0 + rand_mod
+                    };
+                    for inner in 0..3 {
+                        let length = if inner < 2 { 112.0 } else { 480.0 };
+                        for p in pv.iter_mut() {
+                            if attack_type == 0 {
+                                let sprite_offset = if normal { 2 } else { 8 };
+                                let end = if normal { length } else { 440.0 };
+                                let width = if normal { 28.0 } else { 20.0 };
+                                world.alloc_laser(Laser {
+                                    in_use: true,
+                                    pos: *p,
+                                    angle: laser_angle,
+                                    speed: 0.0,
+                                    start_offset: 0.0,
+                                    end_offset: end,
+                                    start_length: end,
+                                    width,
+                                    start_time: inner * 16 + 60,
+                                    duration: 90 - inner * 16,
+                                    despawn_duration: 16,
+                                    hitbox_start: 50,
+                                    state: 0, // start_time is always >= 60, so warmup
+                                    timer: 0,
+                                    color: sprite_offset,
+                                });
+                            } else {
+                                self.bullet_props.pos = *p;
+                                spawn_bullet_pattern(world, &self.bullet_props);
+                            }
+                            p[0] += laser_angle.cos() * length;
+                            p[1] += laser_angle.sin() * length;
+                            laser_angle += PI / 4.0;
+                        }
+                        laser_angle += angle_diff - TAU;
+                    }
+                }
+            }
+            8 => {
+                // ExInsStage6Func8 (EnemyEclInstr.cpp:912) — Remilia "Scarlet
+                // Meister"/"Red Magic" tier: for every live big (>=30px) bullet,
+                // spawn one small bullet (sprite 3, colour offset 1) at its
+                // position aimed in a random direction. One f32 draw per big
+                // bullet; var3 records the count.
+                let positions: Vec<[f32; 2]> = world
+                    .bullets
+                    .iter()
+                    .filter(|b| b.despawn_timer == 0 && b.height >= 30.0)
+                    .map(|b| b.pos)
+                    .collect();
+                let mut changed = 0;
+                for pos in positions {
+                    let props = BulletProps {
+                        pos,
+                        sprite: 3,
+                        sprite_offset: 1,
+                        angle1: world.rng.f32_in_range(TAU) - PI,
+                        speed1: 0.0,
+                        count1: 1,
+                        count2: 1,
+                        flags: 8,
+                        aim_mode: 1,
+                        ..Default::default()
+                    };
+                    spawn_bullet_pattern(world, &props);
+                    changed += 1;
+                }
+                self.ctx.ivars[3] = changed;
+            }
+            9 => {
+                // ExInsStage6Func9 (EnemyEclInstr.cpp:951) — Remilia "Scarlet
+                // Gensokyo": every live small (<30px) stationary bullet is
+                // turned into a slow accelerating one (colour offset 2, flag
+                // 0x10 acceleration over 120 frames). The acceleration angle is
+                // its distance from the boss scaled by pi/256, plus a single
+                // shared random offset. One f32 draw total + a particle burst.
+                let rand_mod = world.rng.f32_in_range(TAU) - PI;
+                world.spawn_particles(12, 1);
+                let (ex, ey) = (self.pos[0], self.pos[1]);
+                for b in world.bullets.iter_mut() {
+                    if b.despawn_timer != 0 || b.height >= 30.0 || b.speed != 0.0 {
+                        continue;
+                    }
+                    let base = (b.sprite as i32 - b.sprite_offset).max(0) as u32;
+                    b.ex_flags |= 0x10;
+                    b.sprite_offset = 2;
+                    b.sprite = base + 2;
+                    b.speed = 0.01;
+                    b.timer = 0;
+                    b.ex_int0 = 120;
+                    let d2 = (ex - b.pos[0]) * (ex - b.pos[0]) + (ey - b.pos[1]) * (ey - b.pos[1]);
+                    let dist = if d2 > 0.1 { d2.sqrt() } else { 0.0 };
+                    let a = dist * PI / 256.0 + rand_mod;
+                    b.ex_accel = [a.cos() * 0.01, a.sin() * 0.01];
+                }
+            }
+            11 => {
+                // ExInsStage6Func11 (EnemyEclInstr.cpp:999) — like Func9 but each
+                // converted bullet gets its own random acceleration angle (one
+                // f32 draw per bullet), plus one discarded draw up front and a
+                // particle burst.
+                let _ = world.rng.f32_in_range(TAU) - PI;
+                world.spawn_particles(12, 1);
+                for b in world.bullets.iter_mut() {
+                    if b.despawn_timer != 0 || b.height >= 30.0 || b.speed != 0.0 {
+                        continue;
+                    }
+                    let base = (b.sprite as i32 - b.sprite_offset).max(0) as u32;
+                    b.ex_flags |= 0x10;
+                    b.sprite_offset = 2;
+                    b.sprite = base + 2;
+                    b.speed = 0.01;
+                    b.timer = 0;
+                    b.ex_int0 = 120;
+                    let a = world.rng.f32_in_range(TAU) - PI;
+                    b.ex_accel = [a.cos() * 0.01, a.sin() * 0.01];
+                }
+            }
+            // idx 6,10 need the bat-wing particle subsystem (the port has no
+            // renderable EffectManager); idx 12,14,15 are other stages. Left
+            // unimplemented per the no-approx rule.
             _ => {}
         }
     }
