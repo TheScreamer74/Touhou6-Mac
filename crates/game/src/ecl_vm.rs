@@ -1517,9 +1517,89 @@ impl Enemy {
                     self.ctx.fvars[3] = world.rng.f32_in_range(m) + (96.0 - m / 2.0); // float3
                 }
             }
-            // idx 5,6,7,8,9,10,11,12,14,15 need subsystems this port lacks
-            // (effects, anm-interrupts, per-bullet sprite-height tests,
-            // laser-segment spawning); left unimplemented per the no-approx rule.
+            8 => {
+                // ExInsStage6Func8 (EnemyEclInstr.cpp:912) — Remilia "Scarlet
+                // Meister"/"Red Magic" tier: for every live big (>=30px) bullet,
+                // spawn one small bullet (sprite 3, colour offset 1) at its
+                // position aimed in a random direction. One f32 draw per big
+                // bullet; var3 records the count.
+                let positions: Vec<[f32; 2]> = world
+                    .bullets
+                    .iter()
+                    .filter(|b| b.despawn_timer == 0 && b.height >= 30.0)
+                    .map(|b| b.pos)
+                    .collect();
+                let mut changed = 0;
+                for pos in positions {
+                    let props = BulletProps {
+                        pos,
+                        sprite: 3,
+                        sprite_offset: 1,
+                        angle1: world.rng.f32_in_range(TAU) - PI,
+                        speed1: 0.0,
+                        count1: 1,
+                        count2: 1,
+                        flags: 8,
+                        aim_mode: 1,
+                        ..Default::default()
+                    };
+                    spawn_bullet_pattern(world, &props);
+                    changed += 1;
+                }
+                self.ctx.ivars[3] = changed;
+            }
+            9 => {
+                // ExInsStage6Func9 (EnemyEclInstr.cpp:951) — Remilia "Scarlet
+                // Gensokyo": every live small (<30px) stationary bullet is
+                // turned into a slow accelerating one (colour offset 2, flag
+                // 0x10 acceleration over 120 frames). The acceleration angle is
+                // its distance from the boss scaled by pi/256, plus a single
+                // shared random offset. One f32 draw total + a particle burst.
+                let rand_mod = world.rng.f32_in_range(TAU) - PI;
+                world.spawn_particles(12, 1);
+                let (ex, ey) = (self.pos[0], self.pos[1]);
+                for b in world.bullets.iter_mut() {
+                    if b.despawn_timer != 0 || b.height >= 30.0 || b.speed != 0.0 {
+                        continue;
+                    }
+                    let base = (b.sprite as i32 - b.sprite_offset).max(0) as u32;
+                    b.ex_flags |= 0x10;
+                    b.sprite_offset = 2;
+                    b.sprite = base + 2;
+                    b.speed = 0.01;
+                    b.timer = 0;
+                    b.ex_int0 = 120;
+                    let d2 = (ex - b.pos[0]) * (ex - b.pos[0]) + (ey - b.pos[1]) * (ey - b.pos[1]);
+                    let dist = if d2 > 0.1 { d2.sqrt() } else { 0.0 };
+                    let a = dist * PI / 256.0 + rand_mod;
+                    b.ex_accel = [a.cos() * 0.01, a.sin() * 0.01];
+                }
+            }
+            11 => {
+                // ExInsStage6Func11 (EnemyEclInstr.cpp:999) — like Func9 but each
+                // converted bullet gets its own random acceleration angle (one
+                // f32 draw per bullet), plus one discarded draw up front and a
+                // particle burst.
+                let _ = world.rng.f32_in_range(TAU) - PI;
+                world.spawn_particles(12, 1);
+                for b in world.bullets.iter_mut() {
+                    if b.despawn_timer != 0 || b.height >= 30.0 || b.speed != 0.0 {
+                        continue;
+                    }
+                    let base = (b.sprite as i32 - b.sprite_offset).max(0) as u32;
+                    b.ex_flags |= 0x10;
+                    b.sprite_offset = 2;
+                    b.sprite = base + 2;
+                    b.speed = 0.01;
+                    b.timer = 0;
+                    b.ex_int0 = 120;
+                    let a = world.rng.f32_in_range(TAU) - PI;
+                    b.ex_accel = [a.cos() * 0.01, a.sin() * 0.01];
+                }
+            }
+            // idx 6,7,10,12,14,15 need subsystems this port lacks (bat-wing
+            // particle state, laser-segment spawning); left unimplemented per
+            // the no-approx rule.
             _ => {}
         }
     }
