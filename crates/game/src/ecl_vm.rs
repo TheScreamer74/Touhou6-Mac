@@ -1517,6 +1517,71 @@ impl Enemy {
                     self.ctx.fvars[3] = world.rng.f32_in_range(m) + (96.0 - m / 2.0); // float3
                 }
             }
+            7 => {
+                // ExInsStage6Func7 (EnemyEclInstr.cpp:795) — Remilia's laser-star
+                // card: two counter-rotating rings of 8 arms, each arm laying 3
+                // segments outward from a 32px-offset start point. param == 0
+                // fires lasers (sprite 1); otherwise the enemy's current
+                // bulletProps from each segment point. One f32 draw up front.
+                let attack_type = param;
+                let rand_mod = world.rng.f32_in_range(TAU);
+                let normal = world.difficulty <= 1;
+                for outer in 0..2 {
+                    let (mut laser_angle, angle_diff) = if outer == 0 {
+                        (-PI + rand_mod, PI / 4.0)
+                    } else {
+                        (7.0 * -PI / 8.0 + rand_mod, -PI / 4.0)
+                    };
+                    let mut pv = [[0.0f32; 2]; 8];
+                    let length0 = 32.0f32;
+                    for slot in pv.iter_mut() {
+                        *slot = [
+                            self.pos[0] + laser_angle.cos() * length0,
+                            self.pos[1] + laser_angle.sin() * length0,
+                        ];
+                        laser_angle += PI / 4.0;
+                    }
+                    laser_angle = if outer == 0 {
+                        -PI + rand_mod
+                    } else {
+                        7.0 * -PI / 8.0 + rand_mod
+                    };
+                    for inner in 0..3 {
+                        let length = if inner < 2 { 112.0 } else { 480.0 };
+                        for p in pv.iter_mut() {
+                            if attack_type == 0 {
+                                let sprite_offset = if normal { 2 } else { 8 };
+                                let end = if normal { length } else { 440.0 };
+                                let width = if normal { 28.0 } else { 20.0 };
+                                world.alloc_laser(Laser {
+                                    in_use: true,
+                                    pos: *p,
+                                    angle: laser_angle,
+                                    speed: 0.0,
+                                    start_offset: 0.0,
+                                    end_offset: end,
+                                    start_length: end,
+                                    width,
+                                    start_time: inner * 16 + 60,
+                                    duration: 90 - inner * 16,
+                                    despawn_duration: 16,
+                                    hitbox_start: 50,
+                                    state: 0, // start_time is always >= 60, so warmup
+                                    timer: 0,
+                                    color: sprite_offset,
+                                });
+                            } else {
+                                self.bullet_props.pos = *p;
+                                spawn_bullet_pattern(world, &self.bullet_props);
+                            }
+                            p[0] += laser_angle.cos() * length;
+                            p[1] += laser_angle.sin() * length;
+                            laser_angle += PI / 4.0;
+                        }
+                        laser_angle += angle_diff - TAU;
+                    }
+                }
+            }
             8 => {
                 // ExInsStage6Func8 (EnemyEclInstr.cpp:912) — Remilia "Scarlet
                 // Meister"/"Red Magic" tier: for every live big (>=30px) bullet,
@@ -1597,9 +1662,9 @@ impl Enemy {
                     b.ex_accel = [a.cos() * 0.01, a.sin() * 0.01];
                 }
             }
-            // idx 6,7,10,12,14,15 need subsystems this port lacks (bat-wing
-            // particle state, laser-segment spawning); left unimplemented per
-            // the no-approx rule.
+            // idx 6,10 need the bat-wing particle subsystem (the port has no
+            // renderable EffectManager); idx 12,14,15 are other stages. Left
+            // unimplemented per the no-approx rule.
             _ => {}
         }
     }
