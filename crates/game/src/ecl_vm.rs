@@ -42,7 +42,7 @@ impl Rng {
     }
 }
 
-fn normalize_angle(mut a: f32) -> f32 {
+pub fn normalize_angle(mut a: f32) -> f32 {
     while a > std::f32::consts::PI {
         a -= std::f32::consts::TAU;
     }
@@ -2354,6 +2354,14 @@ pub fn spawn_bullet_pattern(world: &mut World, props: &BulletProps) {
                 ];
                 ex_int0 = props.ex_ints[0];
                 ex_int1 = props.ex_ints[1];
+            }
+            if props.flags & 0xc00 != 0 {
+                // Wall-bounce group (0x400 all edges / 0x800 top+sides):
+                // dirChangeSpeed = exFloats[0] (or the spawn speed if < 0),
+                // dirChangeMaxTimes = exInts[0] (BulletManager.cpp:363). Stored in
+                // the same ex_f[1]/ex_int1 slots the per-frame bounce reads.
+                ex_f[1] = if props.ex_floats[0] >= 0.0 { props.ex_floats[0] } else { speed };
+                ex_int1 = props.ex_ints[0];
             }
             let bullet_type = props.sprite.clamp(0, 9) as usize;
             world.bullets.push(Bullet {
