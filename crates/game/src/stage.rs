@@ -14,7 +14,7 @@ use crate::anm_vm::AnmRunner;
 use crate::hud::Hud;
 use crate::background::Background;
 use th06_engine::BgScene;
-use crate::ecl_vm::{Bullet, Enemy, Rng, SpawnReq, World, WorldEvent, BULLET_BASE_SPRITE};
+use crate::ecl_vm::{normalize_angle, Bullet, Enemy, Rng, SpawnReq, World, WorldEvent, BULLET_BASE_SPRITE};
 
 pub const FIELD_W: f32 = 384.0;
 pub const FIELD_H: f32 = 448.0;
@@ -1831,6 +1831,32 @@ impl Stage {
                 } else {
                     let t = b.timer as f32 - (interval * b.ex_count) as f32;
                     move_speed = b.speed - t * b.speed / interval as f32;
+                }
+            } else if b.ex_flags & 0xc00 != 0 {
+                // Wall-bounce group (BulletManager.cpp:831): once the bullet is
+                // fully off the playfield, reflect its angle off the crossed
+                // edge(s), reset its speed to dirChangeSpeed (ex_f[1]) and count
+                // the bounce; clear the flag after dirChangeMaxTimes (ex_int1)
+                // bounces. 0x400 bounces all four edges; 0x800 skips the bottom.
+                let (hw, hh) = (b.width / 2.0, b.height / 2.0);
+                let in_bounds = b.pos[0] + hw >= 0.0
+                    && b.pos[0] - hw <= FIELD_W
+                    && b.pos[1] + hh >= 0.0
+                    && b.pos[1] - hh <= FIELD_H;
+                if !in_bounds {
+                    let bounce_bottom = b.ex_flags & 0x400 != 0;
+                    if b.pos[0] < 0.0 || b.pos[0] >= FIELD_W {
+                        b.angle = normalize_angle(-b.angle - std::f32::consts::PI);
+                    }
+                    if b.pos[1] < 0.0 || (bounce_bottom && b.pos[1] >= FIELD_H) {
+                        b.angle = -b.angle;
+                    }
+                    b.speed = b.ex_f[1];
+                    move_speed = b.speed;
+                    b.ex_count += 1;
+                    if b.ex_count >= b.ex_int1 {
+                        b.ex_flags &= !0xc00;
+                    }
                 }
             }
             let factor = if b.spawn_delay > 0 {
