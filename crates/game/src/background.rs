@@ -215,6 +215,8 @@ struct DrawQuad {
     size: [f32; 2],
     z: i8,
     vm: BgQuadVm,
+    /// bg anm script id (for the vertex oracle; unused in rendering).
+    anm_script: i16,
 }
 
 pub struct Background {
@@ -295,6 +297,7 @@ impl Background {
                     size: q.size,
                     z: obj.z_level,
                     vm: BgQuadVm::new((*instrs).clone()),
+                    anm_script: q.anm_script,
                 });
             }
         }
@@ -603,11 +606,12 @@ impl Background {
             let hh = 128.0 * scale_y * sh / th;
 
             // World center (camera subtracted; y up). With op23 AnchorTopLeft,
-            // Draw3 makes `pos` the top-left corner by shifting the centre by
-            // +spriteW*scaleX/2 in x and -spriteH*scaleY/2 in y (note: the shift
-            // uses the sprite px size, not the 128-unit quad half-extent `hw`).
+            // Draw3 shifts the centre by fabsf(spriteW*scaleX/2) in x and
+            // -fabsf(spriteH*scaleY/2) in y (Draw3:876-887) — the ABSOLUTE value,
+            // so an op7 X-flip (negative scaleX) still anchors on the same side.
+            // (Shift uses the sprite px size, not the 128-unit half-extent `hw`.)
             let (ax, ay) = if vm.corner {
-                (sw * scale_x / 2.0, -(sh * scale_y / 2.0))
+                ((sw * scale_x / 2.0).abs(), -(sh * scale_y / 2.0).abs())
             } else {
                 (0.0, 0.0)
             };
@@ -663,5 +667,63 @@ impl Background {
             verts_add,
             tex: self.tex_slot,
         }
+    }
+
+    /// Vertex-oracle support (oracle/vtx): per drawn quad, its bg anm script id,
+    /// world position (base − camera, what the decomp's Draw3 receives as pos),
+    /// quad size, and the four screen-space corners (tl,tr,br,bl) the port
+    /// projects. Also returns the camera facing (for the oracle's SetupCamera).
+    /// Corner math is identical to `scene()`.
+    pub fn dbg_quad_geom(&self) -> ([f32; 3], Vec<(i16, [f32; 3], [f32; 2], [[f32; 2]; 4], f32)>) {
+        let mvp = self.view_proj();
+        let [tw, th] = self.tex_size;
+        let mut out = Vec::new();
+        for &qi in &self.draw_order {
+            let dq = &self.quads[qi];
+            let vm = &dq.vm;
+            if vm.dead || !vm.visible {
+                continue;
+            }
+            let Some(sprite) = vm.sprite else { continue };
+            let Some(&[sx, sy, sw, sh]) = self.sprite_tbl.get(&sprite) else { continue };
+            let _ = (sx, sy);
+            let scale_x = if dq.size[0] != 0.0 { dq.size[0] / sw } else { vm.scale[0] };
+            let scale_y = if dq.size[1] != 0.0 { dq.size[1] / sh } else { vm.scale[1] };
+            let hw = 128.0 * scale_x * sw / tw;
+            let hh = 128.0 * scale_y * sh / th;
+            let (ax, ay) = if vm.corner {
+                ((sw * scale_x / 2.0).abs(), -(sh * scale_y / 2.0).abs())
+            } else {
+                (0.0, 0.0)
+            };
+            let ox = dq.base[0] - self.cam.x + ax;
+            let oy = -(dq.base[1] - self.cam.y) + ay;
+            let oz = dq.base[2] - self.cam.z;
+            let rotm = if (vm.rot[0] != 0.0 || vm.rot[1] != 0.0 || vm.rot[2] != 0.0)
+                && vm.auto_rotate != 2
+            {
+                Some(
+                    glam::Mat3::from_rotation_z(vm.rot[2])
+                        * glam::Mat3::from_rotation_y(vm.rot[1])
+                        * glam::Mat3::from_rotation_x(vm.rot[0]),
+                )
+            } else {
+                None
+            };
+            let corner = |lx: f32, ly: f32| -> ([f32; 2], f32) {
+                let p = glam::Vec3::new(lx, ly, 0.0);
+                let p = if let Some(m) = rotm { m * p } else { p };
+                let clip = mvp * glam::Vec4::new(ox + p.x, oy + p.y, oz + p.z, 1.0);
+                let ndcx = clip.x / clip.w;
+                let ndcy = clip.y / clip.w;
+                ([32.0 + (ndcx * 0.5 + 0.5) * 384.0, 16.0 + (0.5 - ndcy * 0.5) * 448.0], clip.w)
+            };
+            let cs = [corner(-hw, hh), corner(hw, hh), corner(hw, -hh), corner(-hw, -hh)];
+            let corners = [cs[0].0, cs[1].0, cs[2].0, cs[3].0];
+            let min_w = cs.iter().map(|c| c.1).fold(f32::INFINITY, f32::min);
+            let posrel = [dq.base[0] - self.cam.x, dq.base[1] - self.cam.y, dq.base[2] - self.cam.z];
+            out.push((dq.anm_script, posrel, dq.size, corners, min_w));
+        }
+        ([self.facing.x, self.facing.y, self.facing.z], out)
     }
 }
