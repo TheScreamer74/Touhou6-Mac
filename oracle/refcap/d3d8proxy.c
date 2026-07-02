@@ -56,12 +56,34 @@ static unsigned g_capstride = 1;   /* dump every Nth frame in [start,end) */
 static int g_realtime;              /* Sleep per Present so a human can watch */
 static int g_timing;                /* log per-Present timing (env TH06CAP_TIMING) */
 static int g_god;                   /* no-op Player::Die (reach later stages) */
+static int g_practice;              /* force all stages unlocked for Practice */
 static volatile LONG g_frame;       /* Present count == logic frame */
 static FILE *g_log;
 
 /* Player::Die in 102h.exe (config/mapping.csv: 0x427770, __thiscall void(Player*)).
  * ImageBase 0x400000, no dynamic base, so this VA is directly patchable. */
 #define ADDR_PLAYER_DIE 0x427770
+/* g_GameManager (config/globals.csv: 0x69bca0). clrd at +0x1030, stride 0x18
+ * (Clrd), difficultyClearedWithoutRetries at +0x11 (verified via offsetof against
+ * the ZUN_ASSERT_SIZE values). MainMenu::ChoosePracticeLevel offers stages up to
+ * that byte, so forcing it unlocks the practice stage-select. */
+#define ADDR_GAMEMANAGER 0x69bca0
+#define OFF_CLRD 0x1030
+#define CLRD_STRIDE 0x18
+#define OFF_DCWOR 0x11 /* difficultyClearedWithoutRetries */
+#define OFF_DCWR 0x0c  /* difficultyClearedWithRetries */
+
+static void force_practice_unlock(void)
+{
+    /* g_GameManager is a writable global; ParseClrd reloads clrd from score.dat
+     * on menu entry, so re-assert every Present. 6 = all 6 story stages. */
+    for (int c = 0; c < 4; c++) {
+        unsigned char *clrd =
+            (unsigned char *)(ADDR_GAMEMANAGER + OFF_CLRD + c * CLRD_STRIDE);
+        memset(clrd + OFF_DCWR, 6, 5);
+        memset(clrd + OFF_DCWOR, 6, 5);
+    }
+}
 
 static void logf_(const char *fmt, ...)
 {
@@ -116,6 +138,8 @@ static void load_config(void)
             g_realtime = (int)s;
         } else if (sscanf(line, "god %u", &s) == 1) {
             g_god = (int)s;
+        } else if (sscanf(line, "practice %u", &s) == 1) {
+            g_practice = (int)s;
         } else if (sscanf(line, "key %u %u %63s", &s, &e, b) == 3) {
             if (g_nkeys < (int)(sizeof(g_keys) / sizeof(g_keys[0]))) {
                 g_keys[g_nkeys].start = s;
@@ -384,6 +408,8 @@ static HRESULT STDMETHODCALLTYPE my_Present(IDirect3DDevice8 *dev,
                                             HWND wnd, CONST RGNDATA *dirty)
 {
     unsigned f = (unsigned)g_frame;
+    if (g_practice)
+        force_practice_unlock();
     if (g_timing)
         logf_("PRESENT f=%u polls=%u creep=%u clock=%u\n", f, g_pollsThisFrame,
               g_creepMs,

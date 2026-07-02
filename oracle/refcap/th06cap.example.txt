@@ -27,4 +27,10 @@ tap 240 60 12 Z
 #               later stages. NOTE: a stationary player barely damages bosses,
 #               so reaching stage 4+ this way is very slow (bosses end only on
 #               spell timeouts). To capture st4+ efficiently, unlock Practice
-#               (see README) and stage-select directly.
+#               (practice 1) and stage-select directly.
+# practice 1    force all story stages unlocked (pokes g_GameManager.clrd each
+#               Present) so Practice Start -> stage-select offers stages 1-6.
+#               Navigate: title DOWN x2 -> Practice Start, confirm difficulty +
+#               character + shot, then DOWN x(N-1) -> stage N, Z. (Menu timing
+#               needs per-run calibration; the char/shot screen needs several
+#               spaced Z presses to accept -- capture and adjust.)

@@ -107,10 +107,17 @@ never dies. But a *stationary* player barely damages bosses — they only end on
 spell timeouts — so grinding to stage 4 takes ~15 min / ~25 000 logic frames
 (EoSD stages are ~2-3 min each). Use `capstride` to scan such a run cheaply.
 
-The efficient path for st4+ is **Practice mode**, which needs the stage unlocked:
-`MainMenu::ChoosePracticeLevel` offers stages up to
+The efficient path for st4+ is **Practice mode** (`practice 1`), which unlocks the
+stage-select: `MainMenu::ChoosePracticeLevel` offers stages up to
 `g_GameManager.clrd[charShotType].difficultyClearedWithoutRetries[difficulty]`
-(0x69bca0 + offsetof(GameManager, clrd)). `ParseClrd` reloads it from `score.dat`
-on each menu entry, so unlocking means either editing `score.dat`'s `Clrd`
-section or poking that field ≥4 every Present (like the god patch). Not yet
-implemented — tracked for the #10 stage-4 colour diff.
+(g_GameManager 0x69bca0, `clrd` at +0x1030, `difficultyClearedWithoutRetries` at
++0x11 — offsets verified via `offsetof` against the `ZUN_ASSERT_SIZE` values).
+`ParseClrd` reloads it from `score.dat` on each menu entry, so `practice 1` pokes
+all four `clrd` entries to 6 **every Present** (like the god patch), keeping all
+stages unlocked while the menu is up.
+
+Menu choreography (title → **Practice Start** is item index 2, so DOWN×2 → Z;
+then confirm difficulty + character + shot; then on stage-select DOWN×(N−1) → Z
+for stage N) needs per-run timing calibration — the char/shot screen only accepts
+Z after a short intro and needs a few spaced presses. Dump the menu region with a
+small `capstride` and adjust the `key` frames.
