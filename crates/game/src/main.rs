@@ -21,18 +21,29 @@ fn load_archive(path: &Path) -> HashMap<String, Vec<u8>> {
 }
 
 /// Read every `*.wav` in the game's `bgm/` directory, keyed by basename.
-fn load_bgm(dir: &Path) -> HashMap<String, Vec<u8>> {
+fn load_bgm(dir: &Path) -> (HashMap<String, Vec<u8>>, HashMap<String, (u32, u32)>) {
     let mut out = HashMap::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    let mut pos = HashMap::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return (out, pos) };
     for e in entries.flatten() {
         let path = e.path();
-        if path.extension().and_then(|x| x.to_str()) == Some("wav") {
-            if let (Some(name), Ok(data)) = (path.file_name().and_then(|n| n.to_str()), std::fs::read(&path)) {
-                out.insert(name.to_string(), data);
+        if path.extension().and_then(|x| x.to_str()) != Some("wav") {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+        let Ok(data) = std::fs::read(&path) else { continue };
+        // Sibling `.pos`: 2 little-endian u32 (loop_start, loop_end) in frames
+        // (decomp SoundPlayer::LoadPos). Present in a standard TH06 install.
+        if let Ok(p) = std::fs::read(path.with_extension("pos")) {
+            if p.len() >= 8 {
+                let s = u32::from_le_bytes([p[0], p[1], p[2], p[3]]);
+                let ed = u32::from_le_bytes([p[4], p[5], p[6], p[7]]);
+                pos.insert(name.clone(), (s, ed));
             }
         }
+        out.insert(name, data);
     }
-    out
+    (out, pos)
 }
 
 /// Write panics (message, location, backtrace) to logs/crash-<timestamp>.log
@@ -182,13 +193,15 @@ fn main() {
     }
 
     let game_dir = PathBuf::from(game_dir);
+    let (bgm, bgm_pos) = load_bgm(&game_dir.join("bgm"));
     let files = GameFiles {
         tl: load_archive(&game_dir.join("TL.DAT")),
         cm: load_archive(&game_dir.join("CM.DAT")),
         st: load_archive(&game_dir.join("ST.DAT")),
         inn: load_archive(&game_dir.join("IN.DAT")),
         st_en: load_archive(&game_dir.join("th06e_ST.DAT")),
-        bgm: load_bgm(&game_dir.join("bgm")),
+        bgm,
+        bgm_pos,
     };
 
     let engine = Engine::new();
