@@ -1,0 +1,22 @@
+# Reference-capture config (copy next to 102h.exe as th06cap.txt).
+# Frames are logic frames == Present count == capture frame index.
+
+capdir capture
+capstart 0
+capend 1500
+
+# realtime 1   # Sleep(16) per Present so a human can watch at ~60fps.
+              # Omit for capture: the game runs uncapped (fast) but each
+              # captured frame is exactly one logic tick, so patterns are
+              # frame-exact regardless of wall-clock speed.
+
+# Menu navigation: `tap <first> <period> <count> <key>` presses the key (4
+# frames) every <period> frames -- re-confirming menu defaults down the chain
+# (title -> difficulty -> character -> shot type) robustly, without hand-timing
+# each screen. End the taps before stage entry (~frame 1000) so no shots fire
+# and the in-stage background stays unobstructed.
+tap 240 60 12 Z
+
+# Individual holds still work, e.g. to fight: key 1100 999999 Z
+# key <start> <end> <name>   names: Z X Q S SHIFT CTRL ESC RETURN
+#                                    UP DOWN LEFT RIGHT HOME, or raw 0xNN
