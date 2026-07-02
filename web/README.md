@@ -31,6 +31,12 @@ cd web && python3 -m http.server 8080
 Select your game folder (the one with `TL.DAT`, `CM.DAT`, `ST.DAT`,
 `IN.DAT`, `th06e_ST.DAT` and `bgm/`).
 
+After the first load the uploaded files are cached **on your device** in
+IndexedDB, so a return visit shows a **Play** button and skips the folder
+picker (a **Use different files** button clears the cache and re-picks). The
+cache is local — nothing is uploaded — and a version tag invalidates it if the
+stored format ever changes; an incomplete/corrupt set falls back to the picker.
+
 ## Access
 
 There is no login. Access is implicit: only someone who already owns the
