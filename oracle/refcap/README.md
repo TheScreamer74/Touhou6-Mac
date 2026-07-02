@@ -97,3 +97,20 @@ frames in, at a true 60 Hz cadence.
   run is stable to 3000+ frames.
 - Comparing with the port: the port's stage frame 0 = `--scene stage` start;
   find the capture frame where the stage fade-in begins and diff from there.
+- Stage 1 has been validated 1:1 against the port (banks symmetric, colour
+  matches) — confirms the `background.rs` transform fixes against ground truth.
+
+### Reaching later stages (stage 4+ capture)
+
+`god 1` no-ops `Player::Die` (0x427770), so a `key <n> 999999 Z` hold-shoot run
+never dies. But a *stationary* player barely damages bosses — they only end on
+spell timeouts — so grinding to stage 4 takes ~15 min / ~25 000 logic frames
+(EoSD stages are ~2-3 min each). Use `capstride` to scan such a run cheaply.
+
+The efficient path for st4+ is **Practice mode**, which needs the stage unlocked:
+`MainMenu::ChoosePracticeLevel` offers stages up to
+`g_GameManager.clrd[charShotType].difficultyClearedWithoutRetries[difficulty]`
+(0x69bca0 + offsetof(GameManager, clrd)). `ParseClrd` reloads it from `score.dat`
+on each menu entry, so unlocking means either editing `score.dat`'s `Clrd`
+section or poking that field ≥4 every Present (like the god patch). Not yet
+implemented — tracked for the #10 stage-4 colour diff.

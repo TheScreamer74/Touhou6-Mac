@@ -20,3 +20,11 @@ tap 240 60 12 Z
 # Individual holds still work, e.g. to fight: key 1100 999999 Z
 # key <start> <end> <name>   names: Z X Q S SHIFT CTRL ESC RETURN
 #                                    UP DOWN LEFT RIGHT HOME, or raw 0xNN
+
+# capstride N   dump only every Nth frame in [start,end) -- for a cheap sparse
+#               scan of a whole run (e.g. capstride 120 = one frame / 2s).
+# god 1         no-op Player::Die (0x427770) so a hold-shoot run survives to
+#               later stages. NOTE: a stationary player barely damages bosses,
+#               so reaching stage 4+ this way is very slow (bosses end only on
+#               spell timeouts). To capture st4+ efficiently, unlock Practice
+#               (see README) and stage-select directly.

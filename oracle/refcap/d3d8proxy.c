@@ -52,10 +52,16 @@ static int g_nkeys;
 static char g_capdir[MAX_PATH] = "capture";
 static unsigned g_capstart = 0xffffffffu;
 static unsigned g_capend;
+static unsigned g_capstride = 1;   /* dump every Nth frame in [start,end) */
 static int g_realtime;              /* Sleep per Present so a human can watch */
 static int g_timing;                /* log per-Present timing (env TH06CAP_TIMING) */
+static int g_god;                   /* no-op Player::Die (reach later stages) */
 static volatile LONG g_frame;       /* Present count == logic frame */
 static FILE *g_log;
+
+/* Player::Die in 102h.exe (config/mapping.csv: 0x427770, __thiscall void(Player*)).
+ * ImageBase 0x400000, no dynamic base, so this VA is directly patchable. */
+#define ADDR_PLAYER_DIE 0x427770
 
 static void logf_(const char *fmt, ...)
 {
@@ -104,8 +110,12 @@ static void load_config(void)
             g_capstart = s;
         } else if (sscanf(line, "capend %u", &e) == 1) {
             g_capend = e;
+        } else if (sscanf(line, "capstride %u", &s) == 1) {
+            g_capstride = s ? s : 1;
         } else if (sscanf(line, "realtime %u", &s) == 1) {
             g_realtime = (int)s;
+        } else if (sscanf(line, "god %u", &s) == 1) {
+            g_god = (int)s;
         } else if (sscanf(line, "key %u %u %63s", &s, &e, b) == 3) {
             if (g_nkeys < (int)(sizeof(g_keys) / sizeof(g_keys[0]))) {
                 g_keys[g_nkeys].start = s;
@@ -379,7 +389,7 @@ static HRESULT STDMETHODCALLTYPE my_Present(IDirect3DDevice8 *dev,
               g_creepMs,
               FAKE_TIME_BASE + (unsigned)((double)f * (1000.0 / 60.0)) +
                   g_creepMs);
-    if (f >= g_capstart && f < g_capend)
+    if (f >= g_capstart && f < g_capend && (f - g_capstart) % g_capstride == 0)
         capture_backbuffer(dev, f);
     InterlockedIncrement(&g_frame);
     if (g_realtime)
@@ -438,6 +448,20 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
         patch_iat("USER32.dll", "GetKeyboardState", (void *)my_GetKeyboardState);
         patch_iat("DINPUT8.dll", "DirectInput8Create",
                   (void *)my_DirectInput8Create);
+        if (g_god) {
+            /* Overwrite Die()'s prologue with `ret` (0xC3). thiscall, `this` in
+             * ecx, no stack args -> no cleanup needed. Player never dies/loses a
+             * life, so a hold-shoot auto-run reaches later stages. */
+            BYTE *die = (BYTE *)ADDR_PLAYER_DIE;
+            DWORD prot;
+            if (VirtualProtect(die, 1, PAGE_EXECUTE_READWRITE, &prot)) {
+                *die = 0xC3;
+                VirtualProtect(die, 1, prot, &prot);
+                logf_("god: patched Player::Die @ %p -> ret\n", (void *)die);
+            } else {
+                logf_("god: VirtualProtect failed @ %p\n", (void *)die);
+            }
+        }
     }
     return TRUE;
 }
