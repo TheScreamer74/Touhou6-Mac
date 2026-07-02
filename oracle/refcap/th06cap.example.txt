@@ -10,12 +10,13 @@ capend 1500
               # captured frame is exactly one logic tick, so patterns are
               # frame-exact regardless of wall-clock speed.
 
-# Menu navigation: 4-frame Z taps with generous gaps (title -> difficulty ->
-# character -> shot type). Calibrate against th06cap.log / captured frames.
-key 300 304 Z
-key 420 424 Z
-key 540 544 Z
-key 660 664 Z
+# Menu navigation: `tap <first> <period> <count> <key>` presses the key (4
+# frames) every <period> frames -- re-confirming menu defaults down the chain
+# (title -> difficulty -> character -> shot type) robustly, without hand-timing
+# each screen. End the taps before stage entry (~frame 1000) so no shots fire
+# and the in-stage background stays unobstructed.
+tap 240 60 12 Z
 
-# For unobstructed-background stage capture, do NOT hold Z (no shooting).
-# To fight instead: key 800 999999 Z
+# Individual holds still work, e.g. to fight: key 1100 999999 Z
+# key <start> <end> <name>   names: Z X Q S SHIFT CTRL ESC RETURN
+#                                    UP DOWN LEFT RIGHT HOME, or raw 0xNN

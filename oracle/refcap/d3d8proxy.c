@@ -53,6 +53,7 @@ static char g_capdir[MAX_PATH] = "capture";
 static unsigned g_capstart = 0xffffffffu;
 static unsigned g_capend;
 static int g_realtime;              /* Sleep per Present so a human can watch */
+static int g_timing;                /* log per-Present timing (env TH06CAP_TIMING) */
 static volatile LONG g_frame;       /* Present count == logic frame */
 static FILE *g_log;
 
@@ -111,6 +112,23 @@ static void load_config(void)
                 g_keys[g_nkeys].end = e;
                 g_keys[g_nkeys].vk = vk_from_name(b) & 0xff;
                 g_nkeys++;
+            }
+        } else {
+            /* tap <first> <period> <count> <name>: <count> presses (4 frames
+             * each) every <period> frames from <first> -- robustly walks the
+             * menu chain by re-confirming defaults, tolerant of nav timing. */
+            unsigned first, period, count;
+            if (sscanf(line, "tap %u %u %u %63s", &first, &period, &count, b) ==
+                4) {
+                unsigned vk = vk_from_name(b) & 0xff;
+                for (unsigned i = 0; i < count &&
+                     g_nkeys < (int)(sizeof(g_keys) / sizeof(g_keys[0]));
+                     i++) {
+                    g_keys[g_nkeys].start = first + i * period;
+                    g_keys[g_nkeys].end = first + i * period + 4;
+                    g_keys[g_nkeys].vk = vk;
+                    g_nkeys++;
+                }
             }
         }
     }
@@ -356,6 +374,11 @@ static HRESULT STDMETHODCALLTYPE my_Present(IDirect3DDevice8 *dev,
                                             HWND wnd, CONST RGNDATA *dirty)
 {
     unsigned f = (unsigned)g_frame;
+    if (g_timing)
+        logf_("PRESENT f=%u polls=%u creep=%u clock=%u\n", f, g_pollsThisFrame,
+              g_creepMs,
+              FAKE_TIME_BASE + (unsigned)((double)f * (1000.0 / 60.0)) +
+                  g_creepMs);
     if (f >= g_capstart && f < g_capend)
         capture_backbuffer(dev, f);
     InterlockedIncrement(&g_frame);
@@ -406,6 +429,7 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
     (void)hinst; (void)reserved;
     if (reason == DLL_PROCESS_ATTACH) {
         g_mainTid = GetCurrentThreadId();
+        g_timing = getenv("TH06CAP_TIMING") != NULL;
         g_log = fopen("th06cap.log", "w");
         logf_("refcap proxy attached\n");
         load_config();

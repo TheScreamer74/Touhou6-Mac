@@ -39,9 +39,13 @@ Devil/kouma` and a dedicated `~/.wine-th06` prefix (created on first run;
 `brew install --cask wine-stable`).
 
 Config = `th06cap.txt` in the game dir (see `th06cap.example.txt`):
-`capdir`/`capstart`/`capend` select the dumped frame range, `key <start> <end>
-<name>` holds a key for logic frames `[start, end)`. The proxy logs to
-`th06cap.log` (patches applied, device/backbuffer format, capture start).
+`capdir`/`capstart`/`capend` select the dumped frame range; `key <start> <end>
+<name>` holds a key for logic frames `[start, end)`; `tap <first> <period>
+<count> <name>` fires `<count>` short presses every `<period>` frames (robustly
+walks the menu chain by re-confirming defaults — prefer this over hand-timed
+`key` for menu nav); `realtime 1` paces at ~60 Hz for watching. The proxy logs
+to `th06cap.log` (patches, backbuffer format, capture start; `TH06CAP_TIMING=1`
+adds per-Present clock/poll lines).
 
 ## Determinism
 
@@ -61,6 +65,27 @@ frame-locked clock — the menu-music delay (`MainMenu.cpp:1019`, 3000 ms) and B
 load (`SoundPlayer.cpp:212`, 100 ms). A monotone "creep" term (1 ms per poll
 once a frame is polled >64×) advances the clock only inside those spins, exiting
 them instantly and deterministically.
+
+### Timing verified (`TH06CAP_TIMING=1`)
+
+Audited against the decomp game loop, and confirmed in-run:
+
+- **1 logic tick : 1 Present.** In windowed mode the loop ticks the calc chain
+  once (`curFrame==0`), then Presents once and resets `curFrame`
+  (`GameWindow.cpp`, `I_HAVE_NO_CLUE...`); the frame limiter's `do/while` only
+  *consumes* elapsed time, it never multi-ticks. The Present-count frame index
+  therefore equals the logic frame.
+- **`effectiveFramerateMultiplier == 1.0` always.** Windowed sets
+  `framerateMultiplier = 1.0`, so the loop takes the `else` branch
+  (`GameWindow.cpp:147`) — never the 0.5/0.8 slowdown. `ZunTimer` advances whole
+  frames; patterns can't run fractional or desync.
+- **Clock advances exactly `1000/60` ms per Present** (logged:
+  `100000, 100016, 100033, 100050, …`), except one deterministic creep jump at
+  the menu-music wait — which happens **before any stage**.
+- **No duplicate presents:** consecutive captured stage frames are all distinct.
+
+So capture frame F within a stage is exactly F−(constant menu offset) logic
+frames in, at a true 60 Hz cadence.
 
 ## Notes
 
