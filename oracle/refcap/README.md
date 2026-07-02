@@ -97,3 +97,42 @@ frames in, at a true 60 Hz cadence.
   run is stable to 3000+ frames.
 - Comparing with the port: the port's stage frame 0 = `--scene stage` start;
   find the capture frame where the stage fade-in begins and diff from there.
+- Stage 1 has been validated 1:1 against the port (banks symmetric, colour
+  matches) — confirms the `background.rs` transform fixes against ground truth.
+
+### Reaching later stages (stage 4+ capture)
+
+`god 1` no-ops `Player::Die` (0x427770), so a `key <n> 999999 Z` hold-shoot run
+never dies. But a *stationary* player barely damages bosses — they only end on
+spell timeouts — so grinding to stage 4 takes ~15 min / ~25 000 logic frames
+(EoSD stages are ~2-3 min each). Use `capstride` to scan such a run cheaply.
+
+The efficient path for st4+ is **Practice mode** (`practice 1`), which unlocks the
+stage-select: `MainMenu::ChoosePracticeLevel` offers stages up to
+`g_GameManager.clrd[charShotType].difficultyClearedWithoutRetries[difficulty]`
+(g_GameManager 0x69bca0, `clrd` at +0x1030, `difficultyClearedWithoutRetries` at
++0x11 — offsets verified via `offsetof` against the `ZUN_ASSERT_SIZE` values).
+`ParseClrd` reloads it from `score.dat` on each menu entry, so `practice 1` pokes
+all four `clrd` entries to 6 **every Present** (like the god patch), keeping all
+stages unlocked while the menu is up.
+
+The stage-select cursor navigation is timing-fragile (the char/shot screen only
+accepts Z after an intro), so instead use **`forcestage N`**: it writes
+`g_GameManager.currentStage = N-1` (offset +0x1a34, offsetof-verified; the value
+`MainMenu.cpp:837` sets from the cursor) every Present, so a Practice run *starts*
+at stage N regardless of the cursor. Just walk into Practice with dense Z taps and
+`forcestage` picks the stage:
+
+```
+practice 1
+forcestage 4
+god 1
+key 240 248 DOWN     # Start -> Extra
+key 300 308 DOWN     # Extra -> Practice Start
+tap 380 45 16 Z      # dense Z walks practice/difficulty/character/shot/select
+```
+
+Verified: this reliably lands in **stage 4** (Voile library). A real-vs-port
+stage-4 comparison confirmed the port's background colour/brightness is faithful
+(playfield luminance 5.1 vs 4.5 — both dark red-dominant), closing the #10
+stage-4 item. (Wine startup is intermittently crashy; retry the launch.)

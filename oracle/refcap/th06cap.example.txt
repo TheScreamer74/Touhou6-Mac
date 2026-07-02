@@ -20,3 +20,22 @@ tap 240 60 12 Z
 # Individual holds still work, e.g. to fight: key 1100 999999 Z
 # key <start> <end> <name>   names: Z X Q S SHIFT CTRL ESC RETURN
 #                                    UP DOWN LEFT RIGHT HOME, or raw 0xNN
+
+# capstride N   dump only every Nth frame in [start,end) -- for a cheap sparse
+#               scan of a whole run (e.g. capstride 120 = one frame / 2s).
+# god 1         no-op Player::Die (0x427770) so a hold-shoot run survives to
+#               later stages. NOTE: a stationary player barely damages bosses,
+#               so reaching stage 4+ this way is very slow (bosses end only on
+#               spell timeouts). To capture st4+ efficiently, unlock Practice
+#               (practice 1) and stage-select directly.
+# practice 1    force all story stages unlocked (pokes g_GameManager.clrd each
+#               Present) so Practice Start -> stage-select offers stages 1-6.
+# forcestage N  force g_GameManager.currentStage = N-1 each Present, so a Practice
+#               run STARTS at stage N regardless of the stage-select cursor. This
+#               sidesteps the fragile stage-select DOWN timing -- just walk into
+#               practice with dense Z taps and forcestage picks the stage.
+#               Reliable recipe for real stage-N capture (verified st4):
+#                 practice 1 / forcestage 4 / god 1
+#                 key 240 248 DOWN   (Start -> Extra)
+#                 key 300 308 DOWN   (Extra -> Practice Start)
+#                 tap 380 45 16 Z    (dense Z walks practice/diff/char/shot/select)
