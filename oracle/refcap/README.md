@@ -116,8 +116,23 @@ stage-select: `MainMenu::ChoosePracticeLevel` offers stages up to
 all four `clrd` entries to 6 **every Present** (like the god patch), keeping all
 stages unlocked while the menu is up.
 
-Menu choreography (title → **Practice Start** is item index 2, so DOWN×2 → Z;
-then confirm difficulty + character + shot; then on stage-select DOWN×(N−1) → Z
-for stage N) needs per-run timing calibration — the char/shot screen only accepts
-Z after a short intro and needs a few spaced presses. Dump the menu region with a
-small `capstride` and adjust the `key` frames.
+The stage-select cursor navigation is timing-fragile (the char/shot screen only
+accepts Z after an intro), so instead use **`forcestage N`**: it writes
+`g_GameManager.currentStage = N-1` (offset +0x1a34, offsetof-verified; the value
+`MainMenu.cpp:837` sets from the cursor) every Present, so a Practice run *starts*
+at stage N regardless of the cursor. Just walk into Practice with dense Z taps and
+`forcestage` picks the stage:
+
+```
+practice 1
+forcestage 4
+god 1
+key 240 248 DOWN     # Start -> Extra
+key 300 308 DOWN     # Extra -> Practice Start
+tap 380 45 16 Z      # dense Z walks practice/difficulty/character/shot/select
+```
+
+Verified: this reliably lands in **stage 4** (Voile library). A real-vs-port
+stage-4 comparison confirmed the port's background colour/brightness is faithful
+(playfield luminance 5.1 vs 4.5 — both dark red-dominant), closing the #10
+stage-4 item. (Wine startup is intermittently crashy; retry the launch.)

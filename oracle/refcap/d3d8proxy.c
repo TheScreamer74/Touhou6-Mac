@@ -57,6 +57,7 @@ static int g_realtime;              /* Sleep per Present so a human can watch */
 static int g_timing;                /* log per-Present timing (env TH06CAP_TIMING) */
 static int g_god;                   /* no-op Player::Die (reach later stages) */
 static int g_practice;              /* force all stages unlocked for Practice */
+static int g_forcestage;            /* if >0, force currentStage = g_forcestage-1 */
 static volatile LONG g_frame;       /* Present count == logic frame */
 static FILE *g_log;
 
@@ -72,6 +73,10 @@ static FILE *g_log;
 #define CLRD_STRIDE 0x18
 #define OFF_DCWOR 0x11 /* difficultyClearedWithoutRetries */
 #define OFF_DCWR 0x0c  /* difficultyClearedWithRetries */
+/* GameManager.currentStage at +0x1a34 (offsetof-verified). Practice sets it from
+ * the stage-select cursor (MainMenu.cpp:837); forcing it makes any confirm start
+ * the target stage regardless of cursor — sidesteps the fragile DOWN×N nav. */
+#define OFF_CURRENT_STAGE 0x1a34
 
 static void force_practice_unlock(void)
 {
@@ -140,6 +145,8 @@ static void load_config(void)
             g_god = (int)s;
         } else if (sscanf(line, "practice %u", &s) == 1) {
             g_practice = (int)s;
+        } else if (sscanf(line, "forcestage %u", &s) == 1) {
+            g_forcestage = (int)s;
         } else if (sscanf(line, "key %u %u %63s", &s, &e, b) == 3) {
             if (g_nkeys < (int)(sizeof(g_keys) / sizeof(g_keys[0]))) {
                 g_keys[g_nkeys].start = s;
@@ -410,6 +417,8 @@ static HRESULT STDMETHODCALLTYPE my_Present(IDirect3DDevice8 *dev,
     unsigned f = (unsigned)g_frame;
     if (g_practice)
         force_practice_unlock();
+    if (g_forcestage > 0)
+        *(int *)(ADDR_GAMEMANAGER + OFF_CURRENT_STAGE) = g_forcestage - 1;
     if (g_timing)
         logf_("PRESENT f=%u polls=%u creep=%u clock=%u\n", f, g_pollsThisFrame,
               g_creepMs,

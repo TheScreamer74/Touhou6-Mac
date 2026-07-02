@@ -30,7 +30,12 @@ tap 240 60 12 Z
 #               (practice 1) and stage-select directly.
 # practice 1    force all story stages unlocked (pokes g_GameManager.clrd each
 #               Present) so Practice Start -> stage-select offers stages 1-6.
-#               Navigate: title DOWN x2 -> Practice Start, confirm difficulty +
-#               character + shot, then DOWN x(N-1) -> stage N, Z. (Menu timing
-#               needs per-run calibration; the char/shot screen needs several
-#               spaced Z presses to accept -- capture and adjust.)
+# forcestage N  force g_GameManager.currentStage = N-1 each Present, so a Practice
+#               run STARTS at stage N regardless of the stage-select cursor. This
+#               sidesteps the fragile stage-select DOWN timing -- just walk into
+#               practice with dense Z taps and forcestage picks the stage.
+#               Reliable recipe for real stage-N capture (verified st4):
+#                 practice 1 / forcestage 4 / god 1
+#                 key 240 248 DOWN   (Start -> Extra)
+#                 key 300 308 DOWN   (Extra -> Practice Start)
+#                 tap 380 45 16 Z    (dense Z walks practice/diff/char/shot/select)
