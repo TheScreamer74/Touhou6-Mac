@@ -47,6 +47,16 @@ pub async fn start_game(files: js_sys::Object) {
         .filter(|(k, _)| k.starts_with("th06_") && k.ends_with(".wav"))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    // `.pos` loop points, if the player uploaded them alongside the wavs.
+    let bgm_pos: HashMap<String, (u32, u32)> = raw
+        .iter()
+        .filter(|(k, v)| k.starts_with("th06_") && k.ends_with(".pos") && v.len() >= 8)
+        .map(|(k, v)| {
+            let s = u32::from_le_bytes([v[0], v[1], v[2], v[3]]);
+            let e = u32::from_le_bytes([v[4], v[5], v[6], v[7]]);
+            (k.replace(".pos", ".wav"), (s, e))
+        })
+        .collect();
 
     let game_files = GameFiles {
         tl: extract(&get("TL.DAT")),
@@ -55,6 +65,7 @@ pub async fn start_game(files: js_sys::Object) {
         inn: extract(&get("IN.DAT")),
         st_en: extract(&get("th06e_ST.DAT")),
         bgm,
+        bgm_pos,
     };
 
     // Create the rendering canvas up front: WebGL needs it to exist before

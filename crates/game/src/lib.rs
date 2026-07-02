@@ -39,6 +39,10 @@ pub struct GameFiles {
     pub st_en: HashMap<String, Vec<u8>>,
     /// BGM wavs keyed by basename ("th06_01.wav", ...).
     pub bgm: HashMap<String, Vec<u8>>,
+    /// Per-track loop points (loop_start, loop_end) in sample-frames, from the
+    /// track's `.pos` file (decomp SoundPlayer::LoadPos). Absent for tracks
+    /// shipped without a `.pos`, in which case the whole track loops.
+    pub bgm_pos: HashMap<String, (u32, u32)>,
 }
 
 /// Every sound effect (SoundPlayer.cpp g_SFXList order; index == SoundIdx).
@@ -316,7 +320,7 @@ pub fn build_game(engine: &Engine, files: &GameFiles, with_audio: bool) -> (Vec<
         }
         for name in BGM_NAMES {
             if let Some(wav) = files.bgm.get(name) {
-                a.register_bgm(name, wav.clone());
+                a.register_bgm(name, wav.clone(), files.bgm_pos.get(name).copied());
             }
         }
     }
